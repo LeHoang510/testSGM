@@ -96,8 +96,11 @@ def gradcam_heatmap_based(
     acts, grads = [], []
     layer = _get_module_by_name(model, target_layer)
 
-    def fwd_hook(_, __, output): acts.append(output)
-    def bwd_hook(_, __, grad_out): grads.append(grad_out[0])
+    def fwd_hook(_, __, output):
+        acts.append(output)
+
+    def bwd_hook(_, __, grad_out):
+        grads.append(grad_out[0])
 
     h1 = layer.register_forward_hook(fwd_hook)
     h2 = layer.register_full_backward_hook(bwd_hook)
@@ -109,11 +112,12 @@ def gradcam_heatmap_based(
     model.zero_grad(set_to_none=True)
     out[0, class_idx].backward()
 
-    h1.remove(); h2.remove()
+    h1.remove()
+    h2.remove()
     if not acts or not grads:
         raise RuntimeError("GradCAM hooks failed.")
 
-    A = acts[0].detach()   # [1,C,H,W]
+    A = acts[0].detach()  # [1,C,H,W]
     G = grads[0].detach()  # [1,C,H,W]
     w = G.mean(dim=(2, 3), keepdim=True)
     cam = torch.relu((w * A).sum(dim=1))[0]
@@ -123,7 +127,9 @@ def gradcam_heatmap_based(
     return cam
 
 
-def overlay_otsu(img_rgb: Image.Image, cam_uint8: np.ndarray, alpha: float = 0.55) -> Image.Image:
+def overlay_otsu(
+    img_rgb: Image.Image, cam_uint8: np.ndarray, alpha: float = 0.55
+) -> Image.Image:
     cam_img = Image.fromarray(cam_uint8).resize(img_rgb.size, Image.Resampling.BILINEAR)
     cam_np = np.array(cam_img)
 
@@ -147,7 +153,9 @@ def overlay_otsu(img_rgb: Image.Image, cam_uint8: np.ndarray, alpha: float = 0.5
     return img_out
 
 
-def predict_binary_label_and_confidence(logits: torch.Tensor) -> Tuple[int, float, float]:
+def predict_binary_label_and_confidence(
+    logits: torch.Tensor,
+) -> Tuple[int, float, float]:
     if logits.ndim == 1:
         logits = logits.unsqueeze(0)
 
@@ -176,18 +184,28 @@ def SGMpredict_folder(
     - Uses load_full_model() to get arch_type/num_patches/gradcam_layer/normalize/input_size
     """
     in_root = Path(input_root).expanduser().resolve()
-    out_root = Path(output_root).expanduser().resolve() if output_root else in_root.parent / f"{in_root.name}_predict"
+    out_root = (
+        Path(output_root).expanduser().resolve()
+        if output_root
+        else in_root.parent / f"{in_root.name}_predict"
+    )
     out_root.mkdir(parents=True, exist_ok=True)
-    
+
     print(f"ground_truth_path: " + ground_truth_path)
     if ground_truth_path is not None and os.path.exists(ground_truth_path):
         print(f"ground_truth_path ok.")
 
-    dev = torch.device(device) if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dev = (
+        torch.device(device)
+        if device
+        else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    )
     print(f"[SGMpredict_folder] Using device: {dev}")
 
     # Load full model metadata
-    model, input_size, model_name, gradcam_layer, normalize, num_patches, arch_type = load_full_model(model_path)
+    model, input_size, model_name, gradcam_layer, normalize, num_patches, arch_type = (
+        load_full_model(model_path)
+    )
     model = model.to(dev).eval()
     target_layer = gradcam_layer or "layer4"
     preprocess = build_preprocess(tuple(input_size), normalize)
@@ -197,6 +215,7 @@ def SGMpredict_folder(
     patch_gradcam_ready = False
     if arch_type is not None and str(arch_type).lower() != "based":
         from src.gradcam.gradcam_utils_patch import pre_mil_gradcam, mil_gradcam
+
         patch_gradcam_ready = True
 
     images = list_images(in_root)
@@ -206,7 +225,7 @@ def SGMpredict_folder(
         rel = img_path.relative_to(in_root)
         rel_dir = rel.parent
         img_our_dir = out_root / rel_dir / "img"
-        #img_our_dir.mkdir(parents=True, exist_ok=True)
+        # img_our_dir.mkdir(parents=True, exist_ok=True)
 
         # Load and save original as PNG
         img = safe_convert_to_rgb(Image.open(img_path))
@@ -252,11 +271,13 @@ def SGMpredict_folder(
         #     if SAVE_GRADCAM:
         #         img.save(out_grad_path, format="PNG")
 
-        rows_by_folder.setdefault(rel_dir, []).append({
-            "image_id": img_path.name,
-            "label": str(label),
-            "confidence_score": f"{conf:.6f}",
-        })
+        rows_by_folder.setdefault(rel_dir, []).append(
+            {
+                "image_id": str(img_path.name),  # Nếu ground-truth là tên file đầy đủ
+                "label": str(label),
+                "confidence_score": f"{conf:.6f}",
+            }
+        )
 
     #  Compute and print prediction stats
     if ground_truth_path is not None and os.path.exists(ground_truth_path):
@@ -268,9 +289,15 @@ def SGMpredict_folder(
     # Write CSV per subfolder
     if SAVE_GRADCAM:
         for rel_dir, rows in rows_by_folder.items():
-            csv_path = (out_root / rel_dir / "metadata.csv") if str(rel_dir) != "." else (out_root / "metadata.csv")
+            csv_path = (
+                (out_root / rel_dir / "metadata.csv")
+                if str(rel_dir) != "."
+                else (out_root / "metadata.csv")
+            )
             with open(csv_path, "w", newline="", encoding="utf-8") as f:
-                w = csv.DictWriter(f, fieldnames=["image_id", "label", "confidence_score"])
+                w = csv.DictWriter(
+                    f, fieldnames=["image_id", "label", "confidence_score"]
+                )
                 w.writeheader()
                 w.writerows(rows)
 
@@ -310,7 +337,9 @@ def _load_rgb(path: Path) -> Image.Image:
     return Image.open(path).convert("RGB")
 
 
-def _compact_title(view: str, side: str, label: Optional[int], conf: Optional[float]) -> str:
+def _compact_title(
+    view: str, side: str, label: Optional[int], conf: Optional[float]
+) -> str:
     token = f"{view}_{side}"
     if label is None or conf is None:
         return f"{token} | NA"
@@ -326,7 +355,7 @@ def _find_original_from_gradcam(folder: Path, gradcam_path: Path) -> Optional[Pa
     name = gradcam_path.name
     if not name.endswith("_gradcam.png"):
         return None
-    stem = name[:-len("_gradcam.png")]  # <stem>
+    stem = name[: -len("_gradcam.png")]  # <stem>
     for ext in [".png", ".jpg", ".jpeg"]:
         p = folder / f"{stem}{ext}"
         if p.exists():
@@ -362,7 +391,9 @@ def viz_sgm_predict(root_folder: str, figsize=(18, 5), compare: bool = False) ->
     if not root.exists():
         raise FileNotFoundError(f"Folder not found: {root}")
 
-    folders = sorted([p for p in root.rglob("*") if p.is_dir() and (p / "result.csv").exists()])
+    folders = sorted(
+        [p for p in root.rglob("*") if p.is_dir() and (p / "result.csv").exists()]
+    )
     if not folders:
         raise FileNotFoundError(f"No subfolder with result.csv found under: {root}")
 
@@ -382,7 +413,7 @@ def viz_sgm_predict(root_folder: str, figsize=(18, 5), compare: bool = False) ->
             base, view, side, idx = parsed
             key = (view, side)
 
-            stem = p.name[:-len("_gradcam.png")]  # xxx_CC_R_2
+            stem = p.name[: -len("_gradcam.png")]  # xxx_CC_R_2
             label_conf = csv_map.get(stem)
             label = label_conf[0] if label_conf else None
             conf = label_conf[1] if label_conf else None
@@ -398,7 +429,11 @@ def viz_sgm_predict(root_folder: str, figsize=(18, 5), compare: bool = False) ->
                 cand_conf = cand["conf"]
                 if prev_conf is None and cand_conf is not None:
                     groups[base][key] = cand
-                elif prev_conf is not None and cand_conf is not None and cand_conf > prev_conf:
+                elif (
+                    prev_conf is not None
+                    and cand_conf is not None
+                    and cand_conf > prev_conf
+                ):
                     groups[base][key] = cand
 
         if not groups:

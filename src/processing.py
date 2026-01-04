@@ -178,6 +178,7 @@ def SGMpredict_folder(
     device: Optional[str] = None,
 ) -> Path:
     """
+    - Dự đoán dựa trên danh sách ảnh từ file CSV ground-truth (cột image_path hoặc link)
     - Per-subfolder result.csv
     - Always save original as PNG
     - Only label==1 => overlay GradCAM; else *_gradcam.png is the original image
@@ -191,7 +192,7 @@ def SGMpredict_folder(
     )
     out_root.mkdir(parents=True, exist_ok=True)
 
-    print(f"ground_truth_path: " + ground_truth_path)
+    print(f"ground_truth_path: " + str(ground_truth_path))
     if ground_truth_path is not None and os.path.exists(ground_truth_path):
         print(f"ground_truth_path ok.")
 
@@ -210,27 +211,52 @@ def SGMpredict_folder(
     target_layer = gradcam_layer or "layer4"
     preprocess = build_preprocess(tuple(input_size), normalize)
 
-    # For patch/MIL GradCAM (your project modules)
-    # Only import if needed
-    patch_gradcam_ready = False
-    if arch_type is not None and str(arch_type).lower() != "based":
-        from src.gradcam.gradcam_utils_patch import pre_mil_gradcam, mil_gradcam
+    # Load ground-truth CSV, xử lý group/chuẩn hóa
+    image_list = []
+    if ground_truth_path is not None and os.path.exists(ground_truth_path):
+        with open(ground_truth_path, "r", newline="", encoding="utf-8") as f:
+            rdr = csv.DictReader(f)
+            fieldnames = rdr.fieldnames if rdr.fieldnames else []
+            image_path_key = None
+            link_key = None
+            for k in fieldnames:
+                if k.lower() == "image_path":
+                    image_path_key = k
+                if k.lower() == "link":
+                    link_key = k
+            for row in rdr:
+                img_path_str = (
+                    row.get(image_path_key, "")
+                    if image_path_key
+                    else row.get(link_key, "")
+                )
+                img_path_str = img_path_str.strip()
+                if img_path_str:
+                    image_list.append(img_path_str)
+    else:
+        # Nếu không có ground-truth CSV thì lấy toàn bộ ảnh trong thư mục như cũ
+        image_list = [str(p) for p in list_images(in_root)]
 
-        patch_gradcam_ready = True
-
-    images = list_images(in_root)
     rows_by_folder: Dict[Path, List[Dict[str, str]]] = {}
 
-    for img_path in tqdm(images, desc="SGMpredict", unit="img"):
-        rel = img_path.relative_to(in_root)
+    for img_path_str in tqdm(image_list, desc="SGMpredict", unit="img"):
+        img_path = Path(img_path_str)
+        if not img_path.is_absolute():
+            img_path = in_root / img_path
+        if not img_path.exists():
+            print(f"[WARN] Không tìm thấy ảnh: {img_path}")
+            continue
+        rel = (
+            img_path.relative_to(in_root)
+            if img_path.is_relative_to(in_root)
+            else Path(img_path.name)
+        )
         rel_dir = rel.parent
         img_our_dir = out_root / rel_dir / "img"
         # img_our_dir.mkdir(parents=True, exist_ok=True)
 
         # Load and save original as PNG
         img = safe_convert_to_rgb(Image.open(img_path))
-        # (out_dir / f"{img_path.stem}.png").write_bytes(b"")  # ensure path exists on some envs
-        # img.save(out_dir / f"{img_path.stem}.png", format="PNG")
 
         x = preprocess(img).unsqueeze(0).to(dev)
 
@@ -241,39 +267,9 @@ def SGMpredict_folder(
 
         out_grad_path = img_our_dir / f"{img_path.stem}.png"
 
-        # if label == 1:
-        #     # GradCAM for Positive
-        #     try:
-        #         if arch_type is None or str(arch_type).lower() == "based":
-        #             cam = gradcam_heatmap_based(model, x, target_layer, class_idx=1)
-        #         else:
-        #             # Patch/MIL: use your own pipeline
-        #             # pre_mil_gradcam expects model_tuple in your codebase
-        #             model_tuple = (model, tuple(input_size), model_name, target_layer, normalize, num_patches, arch_type)
-        #             model_out, input_tensor, img0, layer0, class_idx0, pred_class0, prob0 = pre_mil_gradcam(model_tuple, str(img_path))
-        #             cam = mil_gradcam(model_out, input_tensor, layer0, class_idx=1)
-
-        #             # mil_gradcam may return multi-heatmaps; pick a safe visualization
-        #             # - if cam is [H,W] -> OK
-        #             # - if cam is [N,H,W] -> merge by max
-        #             if cam.ndim == 3:
-        #                 cam = cam.max(axis=0).astype(np.uint8)
-
-        #         overlay = overlay_otsu(img, cam, alpha=0.55)
-        #         if SAVE_GRADCAM:
-        #             overlay.save(out_grad_path, format="PNG")
-        #     except Exception:
-        #         # Fail-safe: if GradCAM crashes, still output original image to keep pipeline running
-        #         if SAVE_GRADCAM:
-        #             img.save(out_grad_path, format="PNG")
-        # else:
-        #     # Hide gradcam: use original
-        #     if SAVE_GRADCAM:
-        #         img.save(out_grad_path, format="PNG")
-
         rows_by_folder.setdefault(rel_dir, []).append(
             {
-                "image_id": str(img_path.name),  # Nếu ground-truth là tên file đầy đủ
+                "image_id": str(img_path.name),
                 "label": str(label),
                 "confidence_score": f"{conf:.6f}",
             }

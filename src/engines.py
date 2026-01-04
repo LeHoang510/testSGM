@@ -160,6 +160,8 @@ def evaluate_model(
     gt_rows: List[Dict] = []
     image_paths_set = set()
     image_ids_set = set()
+    grouped_rows = {}
+
     with open(gt_csv_path, "r", newline="", encoding="utf-8") as f:
         rdr = csv.DictReader(f)
         fieldnames = rdr.fieldnames if rdr.fieldnames else []
@@ -169,7 +171,11 @@ def evaluate_model(
         for k in fieldnames:
             if k.lower() == "abnormality":
                 abnormality_key = k
-                break
+            if k.lower() == "image_path":
+                image_path_key = k
+            if k.lower() == "link":
+                link_key = k
+        # Group rows by image_path or link if present
         for row in rdr:
             # If split column missing, add it with value "test"
             if not has_split:
@@ -183,15 +189,42 @@ def evaluate_model(
                     row["cancer"] = "1"
                 else:
                     row["cancer"] = ""
-            gt_rows.append(row)
+            # Determine grouping key
+            group_key = None
+            if "image_path_key" in locals():
+                group_key = row.get(image_path_key, "").strip()
+            elif "link_key" in locals():
+                group_key = row.get(link_key, "").strip()
+            else:
+                group_key = row.get("image_id", "").strip()
+            if not group_key:
+                continue
+            # Group bounding boxes
+            if group_key not in grouped_rows:
+                grouped_rows[group_key] = {"row": row, "bbxs": []}
+            # Collect bounding box if present
+            bbx = None
+            if all(k in row for k in ["x", "y", "width", "height"]):
+                try:
+                    bbx = (
+                        float(row["x"]),
+                        float(row["y"]),
+                        float(row["width"]),
+                        float(row["height"]),
+                    )
+                except Exception:
+                    bbx = None
+            if bbx:
+                grouped_rows[group_key]["bbxs"].append(bbx)
+        # Now process grouped_rows
+        for group_key, info in grouped_rows.items():
+            row = info["row"]
             img_id = row.get("image_id", "").strip()
             if img_id:
                 image_ids_set.add(img_id)
-            img_path = row.get("image_path", "").strip()
+            img_path = row.get("image_path", "").strip() or row.get("link", "").strip()
             if img_path:
                 image_paths_set.add(img_path)
-            if not img_id:
-                continue
             cancer_raw = row.get("cancer", None)
             if cancer_raw is None or cancer_raw == "":
                 continue
@@ -200,6 +233,7 @@ def evaluate_model(
             except Exception:
                 continue
             gt_map[img_id] = 1 if cancer_lab == 1 else 0
+            # Optionally: you can store info["bbxs"] for later use if needed
 
     # Print statistics
     print(f"[STAT] Number of unique image_id: {len(image_ids_set)}")

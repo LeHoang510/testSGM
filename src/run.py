@@ -425,7 +425,7 @@ def run_predictions(
             )
             w.writeheader()
             w.writerows(folder_metadata)
-        print(f"[INFO] Đã lưu metadata.csv cho folder: {folder_key}")
+        # print(f"[INFO] Đã lưu metadata.csv cho folder: {folder_key}")
 
     # Lưu metadata.csv tổng
     out_fieldnames = list(fieldnames) if fieldnames else []

@@ -335,5 +335,21 @@ def evaluate_model(
 
     print(classification_report(all_labels, all_preds, digits=4, zero_division=0))
 
+    # After grouping, save to <original>_fixed.csv
+    fixed_csv_path = gt_csv_path.parent / f"{gt_csv_path.stem}_fixed.csv"
+    # Prepare fieldnames for output
+    out_fieldnames = list(fieldnames)
+    if "bbxs" not in out_fieldnames:
+        out_fieldnames.append("bbxs")
+    with open(fixed_csv_path, "w", newline="", encoding="utf-8") as fout:
+        writer = csv.DictWriter(fout, fieldnames=out_fieldnames)
+        writer.writeheader()
+        for group_key, info in grouped_rows.items():
+            row = info["row"].copy()
+            # Serialize bbxs as string
+            row["bbxs"] = str(info["bbxs"])
+            writer.writerow(row)
+    print(f"[INFO] Đã lưu file ground-truth đã group: {fixed_csv_path}")
+
     return acc
     # End Block not changed

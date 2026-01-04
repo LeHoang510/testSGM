@@ -401,7 +401,7 @@ def run_predictions(
     if "confidence" not in out_fieldnames:
         out_fieldnames.append("confidence")
 
-    output_csv_path = output_root / "metadata_predictions.csv"
+    output_csv_path = output_root / "metadata.csv"
     with open(output_csv_path, "w", newline="", encoding="utf-8") as fout:
         writer = csv.DictWriter(fout, fieldnames=out_fieldnames)
         writer.writeheader()

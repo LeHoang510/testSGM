@@ -334,12 +334,6 @@ def run_predictions(
         # Lưu ảnh và gradcam nếu cần
         if save_gradcam:
             rel_path = Path(img_path_str)
-            # Đảm bảo rel_path không bắt đầu bằng dấu "/" (tránh lỗi absolute path)
-            rel_path = (
-                rel_path.relative_to(rel_path.anchor)
-                if rel_path.is_absolute()
-                else rel_path
-            )
             img_out_dir = output_root / rel_path.parent / "img"
             img_out_dir.mkdir(parents=True, exist_ok=True)  # Đảm bảo thư mục tồn tại
 
@@ -348,7 +342,7 @@ def run_predictions(
             try:
                 img.save(img_out_path, format="PNG")
             except Exception as e:
-                print(f"[ERROR] Không thể lưu ảnh gốc {img_out_path}: {e}")
+                print(f"[ERROR] Không thể lưu ảnh gốc {img_path.stem}: {e}")
 
             # Tạo và lưu gradcam
             gradcam_out_path = img_out_dir / f"{img_path.stem}_gradcam.png"
@@ -359,6 +353,7 @@ def run_predictions(
                         overlay = overlay_otsu(img, cam, alpha=0.55)
                         overlay.save(gradcam_out_path, format="PNG")
                     else:
+                        # Patch/MIL: use your own pipeline if available
                         try:
                             from src.gradcam.gradcam_utils_patch import (
                                 pre_mil_gradcam,
@@ -407,6 +402,7 @@ def run_predictions(
                             f"[ERROR] Không thể lưu gradcam cho {img_path.stem}: {e_save}"
                         )
             else:
+                # Label == 0: save original image as gradcam
                 try:
                     img.save(gradcam_out_path, format="PNG")
                 except Exception as e:

@@ -164,10 +164,25 @@ def evaluate_model(
         rdr = csv.DictReader(f)
         fieldnames = rdr.fieldnames if rdr.fieldnames else []
         has_split = "split" in fieldnames
+        has_cancer = "cancer" in [k.lower() for k in fieldnames]
+        abnormality_key = None
+        for k in fieldnames:
+            if k.lower() == "abnormality":
+                abnormality_key = k
+                break
         for row in rdr:
             # If split column missing, add it with value "test"
             if not has_split:
                 row["split"] = "test"
+            # If cancer column missing, create it from abnormality
+            if not has_cancer and abnormality_key:
+                ab_val = row.get(abnormality_key, "").strip().lower()
+                if ab_val == "negative":
+                    row["cancer"] = "0"
+                elif ab_val == "positive":
+                    row["cancer"] = "1"
+                else:
+                    row["cancer"] = ""
             gt_rows.append(row)
             img_id = row.get("image_id", "").strip()
             if img_id:
@@ -178,7 +193,7 @@ def evaluate_model(
             if not img_id:
                 continue
             cancer_raw = row.get("cancer", None)
-            if cancer_raw is None:
+            if cancer_raw is None or cancer_raw == "":
                 continue
             try:
                 cancer_lab = int(float(cancer_raw))

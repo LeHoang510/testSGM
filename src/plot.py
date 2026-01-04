@@ -1,33 +1,34 @@
-from PIL import Image, ImageDraw, ImageFont
-from typing import Optional, Tuple
-import numpy as np
+import ast
+from pathlib import Path
+from typing import List, Tuple, Optional
+from PIL import Image, ImageDraw
 
 
-def draw_bbox_on_image(
+def parse_bbxs_from_string(bbxs_str: str) -> List[Tuple[float, float, float, float]]:
+    """Parse bbxs string to list of tuples"""
+    try:
+        bbxs = ast.literal_eval(bbxs_str)
+        if isinstance(bbxs, list):
+            return bbxs
+    except Exception:
+        pass
+    return []
+
+
+def draw_bboxes_on_image(
     img: Image.Image,
-    bbox: Optional[Tuple[float, float, float, float]],
-    color: str = "red",
-    width: int = 3,
+    bbxs: List[Tuple[float, float, float, float]],
+    color="red",
+    width=3,
 ) -> Image.Image:
-    """
-    Vẽ bounding box lên ảnh.
-    bbox: (x, y, width, height)
-    """
-    if bbox is None:
-        return img
-
+    """Draw bounding boxes on image"""
     img_copy = img.copy()
     draw = ImageDraw.Draw(img_copy)
-    x, y, w, h = bbox
 
-    # Clip bbox to image size
-    img_w, img_h = img.size
-    x1 = max(0, int(x))
-    y1 = max(0, int(y))
-    x2 = min(img_w, int(x + w))
-    y2 = min(img_h, int(y + h))
-
-    if x2 > x1 and y2 > y1:
-        draw.rectangle([x1, y1, x2, y2], outline=color, width=width)
+    for bbox in bbxs:
+        if len(bbox) == 4:
+            x, y, w, h = bbox
+            # Draw rectangle
+            draw.rectangle([(x, y), (x + w, y + h)], outline=color, width=width)
 
     return img_copy

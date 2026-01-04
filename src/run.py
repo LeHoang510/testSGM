@@ -19,8 +19,13 @@ from src.processing import (
     gradcam_heatmap_based,
     overlay_otsu,
 )
-from src.utils import file_hash, find_image_path, parse_bbox_from_row
-from src.plot import draw_bbox_on_image
+from src.utils import (
+    file_hash,
+    find_image_path,
+    print_stats,
+    print_image_matching_stats,
+)
+from src.plot import parse_bbxs_from_string, draw_bboxes_on_image
 from sklearn.metrics import (
     classification_report,
     roc_auc_score,
@@ -305,8 +310,7 @@ def run_predictions(
     # Chạy predictions
     predictions_map = {}
     output_rows = []
-    # Group rows by folder for metadata.csv
-    rows_by_folder: Dict[Path, List[Dict]] = {}
+    folder_metadata = defaultdict(list)  # Group metadata by folder
 
     for img_path_str, row in tqdm(image_list, desc="Predictions", unit="img"):
         img_path = Path(img_path_str)
@@ -335,10 +339,10 @@ def run_predictions(
         out_row["confidence"] = f"{conf:.6f}"
         output_rows.append(out_row)
 
-        # Group by folder for per-folder metadata.csv
+        # Group by folder for per-folder metadata
         rel_path = Path(img_path_str)
-        rel_dir = rel_path.parent
-        rows_by_folder.setdefault(rel_dir, []).append(
+        folder_key = rel_path.parent
+        folder_metadata[folder_key].append(
             {
                 "image_id": img_path.name,
                 "label": str(label),
@@ -351,11 +355,15 @@ def run_predictions(
             img_out_dir = output_root / rel_path.parent
             img_out_dir.mkdir(parents=True, exist_ok=True)
 
-            # Parse bbox từ row
-            bbox = parse_bbox_from_row(row)
+            # Parse bbxs và vẽ lên ảnh gốc
+            bbxs_str = row.get("bbxs", "[]")
+            bbxs = parse_bbxs_from_string(bbxs_str)
+            if bbxs:
+                img_with_bbox = draw_bboxes_on_image(img, bbxs, color="red", width=3)
+            else:
+                img_with_bbox = img
 
-            # Lưu ảnh gốc với bbox vẽ lên (nếu có)
-            img_with_bbox = draw_bbox_on_image(img, bbox, color="green", width=3)
+            # Lưu ảnh gốc (có bbox nếu có)
             img_out_path = img_out_dir / f"{img_path.stem}.png"
             try:
                 img_with_bbox.save(img_out_path, format="PNG")
@@ -371,7 +379,6 @@ def run_predictions(
                         overlay = overlay_otsu(img, cam, alpha=0.55)
                         overlay.save(gradcam_out_path, format="PNG")
                     else:
-                        # Patch/MIL: use your own pipeline if available
                         try:
                             from src.gradcam.gradcam_utils_patch import (
                                 pre_mil_gradcam,
@@ -420,7 +427,6 @@ def run_predictions(
                             f"[ERROR] Không thể lưu gradcam cho {img_path.stem}: {e_save}"
                         )
             else:
-                # Label == 0: save original image as gradcam
                 try:
                     img.save(gradcam_out_path, format="PNG")
                 except Exception as e:
@@ -428,16 +434,7 @@ def run_predictions(
                         f"[ERROR] Không thể lưu gradcam (label=0) cho {img_path.stem}: {e}"
                     )
 
-    # Lưu metadata.csv cho từng thư mục con
-    for rel_dir, rows in rows_by_folder.items():
-        metadata_csv_path = output_root / rel_dir / "metadata.csv"
-        metadata_csv_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(metadata_csv_path, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=["image_id", "label", "confidence_score"])
-            w.writeheader()
-            w.writerows(rows)
-
-    # Lưu metadata tổng với predictions
+    # Lưu metadata.csv tổng
     out_fieldnames = list(fieldnames) if fieldnames else []
     if "predict" not in out_fieldnames:
         out_fieldnames.append("predict")
@@ -451,7 +448,17 @@ def run_predictions(
         writer.writerows(output_rows)
 
     print(f"[INFO] Đã lưu kết quả dự đoán: {output_csv_path}")
-    print(f"[INFO] Đã lưu metadata.csv cho {len(rows_by_folder)} thư mục con")
+
+    # Lưu metadata.csv riêng cho mỗi thư mục
+    for folder_key, rows in folder_metadata.items():
+        folder_csv_path = output_root / folder_key / "metadata.csv"
+        folder_csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(folder_csv_path, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=["image_id", "label", "confidence_score"])
+            w.writeheader()
+            w.writerows(rows)
+
+    print(f"[INFO] Đã lưu metadata.csv riêng cho {len(folder_metadata)} thư mục")
 
     return predictions_map, output_rows
 

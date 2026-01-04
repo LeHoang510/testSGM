@@ -124,20 +124,20 @@ def evaluate_model(
 ):
     """
     Evaluate predictions against ground truth.
-    
+
     Args:
         rows_by_folder: Dict[Path, List[Dict]] from SGMpredict_folder containing predictions
                        Each dict has: "image_id", "label", "confidence_score"
         ground_truth_csv: Path to CSV with columns "image_id" and "cancer" (0 or 1)
-    
-    Computes and prints: accuracy, precision, recall, sensitivity, specificity, AUC, 
+
+    Computes and prints: accuracy, precision, recall, sensitivity, specificity, AUC,
     confusion matrix, and classification report.
     """
-    
+
     if rows_by_folder is None or ground_truth_csv is None:
         print("[evaluate_model] rows_by_folder and ground_truth_csv required.")
         return {}
-    
+
     # Flatten rows_by_folder into predictions dict
     preds_map: Dict[str, int] = {}  # image_id -> pred_label
     for rel_dir, rows in rows_by_folder.items():
@@ -150,20 +150,33 @@ def evaluate_model(
             except Exception:
                 lab = 0
             preds_map[img_id] = 1 if lab == 1 else 0
-    
+
     # Load ground truth from CSV
     gt_csv_path = Path(ground_truth_csv).expanduser().resolve()
     if not gt_csv_path.exists():
         raise FileNotFoundError(f"Ground-truth CSV not found: {gt_csv_path}")
-    
+
     gt_map: Dict[str, int] = {}  # image_id -> gt_label
+    gt_rows: List[Dict] = []
+    image_paths_set = set()
+    image_ids_set = set()
     with open(gt_csv_path, "r", newline="", encoding="utf-8") as f:
         rdr = csv.DictReader(f)
+        fieldnames = rdr.fieldnames if rdr.fieldnames else []
+        has_split = "split" in fieldnames
         for row in rdr:
+            # If split column missing, add it with value "test"
+            if not has_split:
+                row["split"] = "test"
+            gt_rows.append(row)
             img_id = row.get("image_id", "").strip()
+            if img_id:
+                image_ids_set.add(img_id)
+            img_path = row.get("image_path", "").strip()
+            if img_path:
+                image_paths_set.add(img_path)
             if not img_id:
                 continue
-            # Look for "cancer" column (target label)
             cancer_raw = row.get("cancer", None)
             if cancer_raw is None:
                 continue
@@ -172,13 +185,20 @@ def evaluate_model(
             except Exception:
                 continue
             gt_map[img_id] = 1 if cancer_lab == 1 else 0
-    
+
+    # Print statistics
+    print(f"[STAT] Number of unique image_id: {len(image_ids_set)}")
+    if image_paths_set:
+        print(f"[STAT] Number of unique image_path: {len(image_paths_set)}")
+    else:
+        print(f"[STAT] No image_path column found in ground truth CSV.")
+
     # Align predictions with ground truth
     all_preds = []
     all_labels = []
     all_probs = []
     matched_count = 0
-    
+
     for img_id, gt_lab in gt_map.items():
         if img_id in preds_map:
             pred_lab = preds_map[img_id]
@@ -186,14 +206,15 @@ def evaluate_model(
             all_labels.append(gt_lab)
             all_probs.append(float(pred_lab))
             matched_count += 1
-    
+
     if matched_count == 0:
-        raise RuntimeError("No overlapping image_id between predictions and ground-truth CSV.")
-    
+        raise RuntimeError(
+            "No overlapping image_id between predictions and ground-truth CSV."
+        )
+
     total = len(all_labels)
     correct = sum(1 for p, l in zip(all_preds, all_labels) if p == l)
     total_loss = 0.0  # No loss computation for predictions, set to 0
-
 
     # Block not changed
     acc = correct / total
@@ -262,4 +283,3 @@ def evaluate_model(
 
     return acc
     # End Block not changed
-

@@ -51,10 +51,10 @@ def crop_and_update_csv(
     Crop ảnh theo bbox bằng SGM_preprocess, sau đó cập nhật lại các cột image_width, image_height, x, y, width, height, bbxs.
     Lưu ảnh crop vào output_folder, lưu metadata.csv đã update vào output_folder.
     """
-    # Thực hiện crop bằng SGM_preprocess (YOLO)
-    cropped_folder = SGM_preprocess(
+    # Thực hiện crop bằng SGM_preprocess (YOLO), nhận về crop_info_dict
+    cropped_folder, crop_info_dict = SGM_preprocess(
         input_root=dataset_folder,
-        model_path=model_path,  # <-- bổ sung model_path từ tham số
+        model_path=model_path,
         output_root=output_folder,
         overwrite=True,
         verbose=True,
@@ -95,33 +95,61 @@ def crop_and_update_csv(
                 continue
 
             try:
+                # Get crop bbox info (x1, y1, x2, y2) from original image
+                crop_bbox = crop_info_dict.get(img_path_str)
+                if crop_bbox is None:
+                    print(f"[WARN] Không tìm thấy crop info cho: {img_path_str}")
+                    updated_rows.append(row)
+                    continue
+
+                crop_x1, crop_y1, crop_x2, crop_y2 = crop_bbox
+
+                # Load cropped image to get new dimensions
                 img = Image.open(out_img_path)
                 img = img.convert("RGB")
                 crop_w, crop_h = img.size
 
-                # Lấy bbox từ metadata, kiểm tra và clip lại cho hợp lệ
+                # Get original lesion bbox from metadata
                 try:
-                    x = max(0, float(row.get("x", 0)))
-                    y = max(0, float(row.get("y", 0)))
-                    width = max(1, min(float(row.get("width", crop_w)), crop_w - x))
-                    height = max(1, min(float(row.get("height", crop_h)), crop_h - y))
+                    orig_x = float(row.get("x", 0))
+                    orig_y = float(row.get("y", 0))
+                    orig_width = float(row.get("width", 0))
+                    orig_height = float(row.get("height", 0))
                 except Exception:
-                    x, y, width, height = 0, 0, crop_w, crop_h
+                    # If bbox info is invalid, assume full cropped image
+                    orig_x, orig_y, orig_width, orig_height = 0, 0, crop_w, crop_h
 
-                # Clip lại bbox nếu vượt quá kích thước ảnh
-                x = max(0, min(x, crop_w - 1))
-                y = max(0, min(y, crop_h - 1))
-                width = max(1, min(width, crop_w - x))
-                height = max(1, min(height, crop_h - y))
+                # Translate bbox coordinates: subtract crop offset
+                new_x = orig_x - crop_x1
+                new_y = orig_y - crop_y1
+                new_width = orig_width
+                new_height = orig_height
 
-                # Update row
+                # Clip bbox to valid region within cropped image
+                new_x = max(0, min(new_x, crop_w - 1))
+                new_y = max(0, min(new_y, crop_h - 1))
+
+                # Adjust width/height if bbox extends beyond image
+                if new_x + new_width > crop_w:
+                    new_width = crop_w - new_x
+                if new_y + new_height > crop_h:
+                    new_height = crop_h - new_y
+
+                # Ensure minimum size
+                new_width = max(1, new_width)
+                new_height = max(1, new_height)
+
+                # Update row with new bbox info
                 row["image_width"] = str(crop_w)
                 row["image_height"] = str(crop_h)
-                row["x"] = str(int(x))
-                row["y"] = str(int(y))
-                row["width"] = str(int(width))
-                row["height"] = str(int(height))
-                row["bbxs"] = str([(int(x), int(y), int(width), int(height))])
+                row["x"] = str(int(new_x))
+                row["y"] = str(int(new_y))
+                row["width"] = str(int(new_width))
+                row["height"] = str(int(new_height))
+                row["bbxs"] = str(
+                    [(int(new_x), int(new_y), int(new_width), int(new_height))]
+                )
+
                 # Update image_path/link to new location (relative to output_folder)
                 if image_path_key:
                     row[image_path_key] = str(out_img_path.relative_to(output_root))

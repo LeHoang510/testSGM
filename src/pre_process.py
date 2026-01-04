@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 
 from PIL import Image
 from huggingface_hub import hf_hub_download
@@ -148,13 +148,17 @@ def SGM_preprocess(
     class_filter: Optional[List[int]] = None,
     overwrite: bool = True,
     verbose: bool = True,
-) -> Path:
+) -> Tuple[Path, Dict[str, Tuple[int, int, int, int]]]:
     """
     Folder A: A/subfolder/picture.(png/jpg/jpeg)
     -> Output: A_preprocess/subfolder/picture.png  (always PNG)
     Behavior: crop ONLY the best (highest confidence) YOLO bbox.
 
     If no detection passes thresholds, the image is skipped.
+
+    Returns:
+        (output_root_path, crop_info_dict)
+        crop_info_dict: {relative_path: (crop_x1, crop_y1, crop_x2, crop_y2)}
     """
     input_root_p = Path(input_root).expanduser().resolve()
     output_root_p = (
@@ -189,10 +193,14 @@ def SGM_preprocess(
     failed = 0
     fallback_basic = 0
 
+    # Dictionary to store crop information: {relative_path: (x1, y1, x2, y2)}
+    crop_info_dict = {}
+
     preprocessor = DMImagePreprocessor()
     pbar = tqdm(image_paths, desc="SGM_preprocess", unit="img", disable=(n == 0))
     for idx, img_path in enumerate(pbar, start=1):
         rel = img_path.relative_to(input_root_p)
+        rel_str = str(rel).replace("\\", "/")
 
         try:
             res = model.predict(
@@ -236,6 +244,8 @@ def SGM_preprocess(
                         out_path = out_dir / f"{img_path.stem}.png"
                         if out_path.exists() and not overwrite:
                             skipped_exists += 1
+                            # Still record crop info even if skipped
+                            crop_info_dict[rel_str] = clipped
                             pbar.set_postfix_str(
                                 f"ok={processed} no_det={skipped_no_det} basic={fallback_basic} exists={skipped_exists} fail={failed}"
                             )
@@ -243,6 +253,8 @@ def SGM_preprocess(
                         crop.save(out_path, format="PNG")
                         processed += 1
                         yolo_detected = True
+                        # Store crop bbox info
+                        crop_info_dict[rel_str] = clipped
 
             # Nếu YOLO không detect được hoặc bbox không hợp lệ, dùng basic crop
             if not yolo_detected:
@@ -260,16 +272,20 @@ def SGM_preprocess(
                     out_path = out_dir / f"{img_path.stem}.png"
                     if out_path.exists() and not overwrite:
                         skipped_exists += 1
+                        # Store crop info from basic crop
+                        crop_info_dict[rel_str] = (x_c, y_c, x_c + w_c, y_c + h_c)
                         pbar.set_postfix_str(
                             f"ok={processed} no_det={skipped_no_det} basic={fallback_basic} exists={skipped_exists} fail={failed}"
                         )
                         continue
                     cv2.imwrite(str(out_path), img_cropped)
                     fallback_basic += 1
+                    # Store crop bbox info from basic crop
+                    crop_info_dict[rel_str] = (x_c, y_c, x_c + w_c, y_c + h_c)
                     if verbose:
                         print(f"[INFO] Đã dùng basic crop: {rel}")
                 except Exception as e_basic:
-                    # Nếu basic crop cũng fail, lưu ảnh gốc
+                    # Nếu basic crop cũng fail, lưu ảnh gốc (no crop = full image)
                     if verbose:
                         print(
                             f"\n[WARN] Basic crop fail: {rel} - {e_basic}, lưu ảnh gốc..."
@@ -277,17 +293,22 @@ def SGM_preprocess(
                     try:
                         img = Image.open(img_path)
                         img = safe_convert_to_rgb(img)
+                        w, h = img.size
                         out_dir = output_root_p / rel.parent
                         out_dir.mkdir(parents=True, exist_ok=True)
                         out_path = out_dir / f"{img_path.stem}.png"
                         if out_path.exists() and not overwrite:
                             skipped_exists += 1
+                            # No crop = full image
+                            crop_info_dict[rel_str] = (0, 0, w, h)
                             pbar.set_postfix_str(
                                 f"ok={processed} no_det={skipped_no_det} basic={fallback_basic} exists={skipped_exists} fail={failed}"
                             )
                             continue
                         img.save(out_path, format="PNG")
                         skipped_no_det += 1
+                        # No crop = full image
+                        crop_info_dict[rel_str] = (0, 0, w, h)
                     except Exception as e_save:
                         failed += 1
                         if verbose:
@@ -318,4 +339,4 @@ def SGM_preprocess(
         print(f"  skipped (exists)       : {skipped_exists}")
         print(f"  failed                 : {failed}")
 
-    return output_root_p
+    return output_root_p, crop_info_dict

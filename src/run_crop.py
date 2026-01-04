@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from src.run import find_image_path, load_and_process_csv, print_stats
+from src.pre_process import SGM_preprocess
+from PIL import Image
 
 
 def print_image_matching_stats(dataset_folder: str, ground_truth_path: str):
@@ -39,6 +41,107 @@ def print_image_matching_stats(dataset_folder: str, ground_truth_path: str):
     )
 
 
+def crop_and_update_csv(
+    dataset_folder: str,
+    fixed_csv_path: Path,
+    output_folder: str,
+):
+    """
+    Crop ảnh theo bbox bằng SGM_preprocess, sau đó cập nhật lại các cột image_width, image_height, x, y, width, height, bbxs.
+    Lưu ảnh crop vào output_folder, lưu metadata.csv đã update vào output_folder.
+    """
+    # Thực hiện crop bằng SGM_preprocess (YOLO)
+    cropped_folder = SGM_preprocess(
+        input_root=dataset_folder,
+        model_path=None,  # model_path sẽ lấy từ config hoặc truyền vào nếu cần
+        output_root=output_folder,
+        overwrite=True,
+        verbose=True,
+    )
+
+    # Đọc lại metadata_fixed.csv để cập nhật bbox cho metadata mới
+    dataset_root = Path(dataset_folder).expanduser().resolve()
+    output_root = Path(output_folder).expanduser().resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    updated_rows = []
+    with open(fixed_csv_path, "r", newline="", encoding="utf-8") as f:
+        rdr = csv.DictReader(f)
+        fieldnames = rdr.fieldnames if rdr.fieldnames else []
+
+        image_path_key = None
+        link_key = None
+        for k in fieldnames:
+            k_lower = k.lower()
+            if k_lower == "image_path":
+                image_path_key = k
+            elif k_lower == "link":
+                link_key = k
+
+        for row in rdr:
+            img_path_str = (
+                row.get(image_path_key, "") if image_path_key else row.get(link_key, "")
+            )
+            img_path_str = img_path_str.strip().replace("\\", "/")
+            if not img_path_str:
+                updated_rows.append(row)
+                continue
+
+            out_img_path = output_root / img_path_str
+            if not out_img_path.exists():
+                print(f"[WARN] Không tìm thấy ảnh crop: {out_img_path}")
+                updated_rows.append(row)
+                continue
+
+            try:
+                img = Image.open(out_img_path)
+                img = img.convert("RGB")
+                crop_w, crop_h = img.size
+
+                # Lấy bbox từ metadata, kiểm tra và clip lại cho hợp lệ
+                try:
+                    x = max(0, float(row.get("x", 0)))
+                    y = max(0, float(row.get("y", 0)))
+                    width = max(1, min(float(row.get("width", crop_w)), crop_w - x))
+                    height = max(1, min(float(row.get("height", crop_h)), crop_h - y))
+                except Exception:
+                    x, y, width, height = 0, 0, crop_w, crop_h
+
+                # Clip lại bbox nếu vượt quá kích thước ảnh
+                x = max(0, min(x, crop_w - 1))
+                y = max(0, min(y, crop_h - 1))
+                width = max(1, min(width, crop_w - x))
+                height = max(1, min(height, crop_h - y))
+
+                # Update row
+                row["image_width"] = str(crop_w)
+                row["image_height"] = str(crop_h)
+                row["x"] = str(int(x))
+                row["y"] = str(int(y))
+                row["width"] = str(int(width))
+                row["height"] = str(int(height))
+                row["bbxs"] = str([(int(x), int(y), int(width), int(height))])
+                # Update image_path/link to new location (relative to output_folder)
+                if image_path_key:
+                    row[image_path_key] = str(out_img_path.relative_to(output_root))
+                elif link_key:
+                    row[link_key] = str(out_img_path.relative_to(output_root))
+
+                updated_rows.append(row)
+            except Exception as e:
+                print(f"[ERROR] Update failed: {out_img_path} - {e}")
+                updated_rows.append(row)
+
+    # Lưu metadata.csv đã update vào output_folder
+    out_fieldnames = fieldnames
+    out_csv_path = output_root / "metadata.csv"
+    with open(out_csv_path, "w", newline="", encoding="utf-8") as fout:
+        writer = csv.DictWriter(fout, fieldnames=out_fieldnames)
+        writer.writeheader()
+        writer.writerows(updated_rows)
+    print(f"[INFO] Đã lưu metadata.csv đã update: {out_csv_path}")
+
+
 def main(
     dataset_folder: str,
     ground_truth_path: str,
@@ -61,6 +164,14 @@ def main(
     # Bước 3: In thống kê
     if stats:
         print_stats(stats)
+
+    # Bước 4: Crop ảnh theo bbox và cập nhật metadata
+    print("[Bước 4] Crop ảnh theo bbox và cập nhật metadata...")
+    crop_and_update_csv(
+        dataset_folder=dataset_folder,
+        fixed_csv_path=fixed_csv_path,
+        output_folder=output_folder,
+    )
 
     print("\n" + "=" * 60)
     print("KẾT THÚC WORKFLOW CROP")

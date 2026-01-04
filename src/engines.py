@@ -209,12 +209,12 @@ def evaluate_model(
 
     if matched_count == 0:
         print(
-            "[ERROR] No overlapping image_id between predictions and ground-truth CSV."
+            "[LỖI] Không tìm thấy image_id trùng giữa dự đoán và file ground-truth CSV."
         )
-        print(f"  Predictions image_id sample: {list(preds_map.keys())[:10]}")
-        print(f"  Ground-truth image_id sample: {list(gt_map.keys())[:10]}")
+        print(f"  Mẫu image_id từ dự đoán: {list(preds_map.keys())[:10]}")
+        print(f"  Mẫu image_id từ ground-truth: {list(gt_map.keys())[:10]}")
         raise RuntimeError(
-            "No overlapping image_id between predictions and ground-truth CSV."
+            "Không tìm thấy image_id trùng giữa dự đoán và ground-truth CSV."
         )
 
     total = len(all_labels)

@@ -25,6 +25,25 @@ from sklearn.metrics import (
 )
 
 
+def find_image_path(dataset_folder: Path, image_id: str) -> str:
+    """
+    Tìm kiếm file ảnh thực tế trong dataset_folder dựa vào image_id.
+    Ưu tiên: dataset_folder/patientID/image_id, nếu không có thì search toàn bộ subfolder.
+    """
+    # Ưu tiên tìm theo cấu trúc dataset_folder/patientID/image_id
+    patient_id = image_id.split("_")[0]
+    candidate = dataset_folder / patient_id / image_id
+    if candidate.exists():
+        return str(candidate.relative_to(dataset_folder))
+    # Nếu không có, search toàn bộ subfolder
+    for p in dataset_folder.rglob(image_id):
+        try:
+            return str(p.relative_to(dataset_folder))
+        except Exception:
+            continue
+    return ""  # Không tìm thấy
+
+
 def load_and_process_csv(
     ground_truth_path: str, dataset_folder: str
 ) -> Tuple[Path, List[Dict], Dict]:
@@ -43,6 +62,8 @@ def load_and_process_csv(
         return gt_csv_path, [], {}
 
     grouped_rows = {}
+
+    dataset_folder_p = Path(dataset_folder).expanduser().resolve()
 
     with open(gt_csv_path, "r", newline="", encoding="utf-8") as f:
         rdr = csv.DictReader(f)
@@ -79,12 +100,31 @@ def load_and_process_csv(
 
             # Chuẩn hóa đường dẫn: thay \ thành /
             group_key = group_key.replace("\\", "/")
-
-            # Cập nhật lại row với đường dẫn đã chuẩn hóa
+            # --- BỔ SUNG: cập nhật lại image_path/link nếu thiếu hoặc sai ---
+            image_id = row.get("image_id", "").strip()
+            # Nếu image_path/link rỗng hoặc file không tồn tại thì tìm lại
+            need_update = False
             if image_path_key:
-                row[image_path_key] = group_key
+                img_path_val = row.get(image_path_key, "").strip().replace("\\", "/")
+                if not img_path_val or not (dataset_folder_p / img_path_val).exists():
+                    need_update = True
             elif link_key:
-                row[link_key] = group_key
+                img_path_val = row.get(link_key, "").strip().replace("\\", "/")
+                if not img_path_val or not (dataset_folder_p / img_path_val).exists():
+                    need_update = True
+            else:
+                img_path_val = ""
+                need_update = True
+            if need_update and image_id:
+                found_path = find_image_path(dataset_folder_p, image_id)
+                if found_path:
+                    if image_path_key:
+                        row[image_path_key] = found_path
+                        group_key = found_path
+                    elif link_key:
+                        row[link_key] = found_path
+                        group_key = found_path
+            # --- END BỔ SUNG ---
 
             if group_key not in grouped_rows:
                 grouped_rows[group_key] = {"row": row.copy(), "bbxs": []}

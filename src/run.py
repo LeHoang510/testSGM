@@ -283,12 +283,8 @@ def run_predictions(
     ):
         folder_metadata = []
 
-        for img_path_str, row in tqdm(
-            images_by_folder[folder_key],
-            desc=f"  {folder_key}",
-            unit="img",
-            leave=False,
-        ):
+        # Remove inner tqdm for images, just use a normal for loop
+        for img_path_str, row in images_by_folder[folder_key]:
             img_path = Path(img_path_str)
             if not img_path.is_absolute():
                 img_path = dataset_root / img_path

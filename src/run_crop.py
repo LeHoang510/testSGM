@@ -45,6 +45,7 @@ def crop_and_update_csv(
     dataset_folder: str,
     fixed_csv_path: Path,
     output_folder: str,
+    model_path: str,
 ):
     """
     Crop ảnh theo bbox bằng SGM_preprocess, sau đó cập nhật lại các cột image_width, image_height, x, y, width, height, bbxs.
@@ -53,7 +54,7 @@ def crop_and_update_csv(
     # Thực hiện crop bằng SGM_preprocess (YOLO)
     cropped_folder = SGM_preprocess(
         input_root=dataset_folder,
-        model_path=None,  # model_path sẽ lấy từ config hoặc truyền vào nếu cần
+        model_path=model_path,  # <-- bổ sung model_path từ tham số
         output_root=output_folder,
         overwrite=True,
         verbose=True,
@@ -146,6 +147,7 @@ def main(
     dataset_folder: str,
     ground_truth_path: str,
     output_folder: str,
+    model_path: str,
 ):
     print("\n" + "=" * 60)
     print("BẮT ĐẦU WORKFLOW CROP")
@@ -171,6 +173,7 @@ def main(
         dataset_folder=dataset_folder,
         fixed_csv_path=fixed_csv_path,
         output_folder=output_folder,
+        model_path=model_path,  # <-- truyền model_path vào
     )
 
     print("\n" + "=" * 60)
@@ -192,6 +195,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output_folder", type=str, required=True, help="Thư mục lưu kết quả"
     )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        required=True,
+        help="Đường dẫn model YOLO dùng để crop",
+    )
 
     args = parser.parse_args()
 
@@ -199,4 +208,5 @@ if __name__ == "__main__":
         dataset_folder=args.dataset_folder,
         ground_truth_path=args.ground_truth_path,
         output_folder=args.output_folder,
+        model_path=args.model_path,
     )

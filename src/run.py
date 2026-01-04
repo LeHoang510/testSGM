@@ -19,6 +19,8 @@ from src.processing import (
     gradcam_heatmap_based,
     overlay_otsu,
 )
+from src.utils import file_hash, find_image_path, parse_bbox_from_row
+from src.plot import draw_bbox_on_image
 from sklearn.metrics import (
     classification_report,
     roc_auc_score,
@@ -303,6 +305,8 @@ def run_predictions(
     # Chạy predictions
     predictions_map = {}
     output_rows = []
+    # Group rows by folder for metadata.csv
+    rows_by_folder: Dict[Path, List[Dict]] = {}
 
     for img_path_str, row in tqdm(image_list, desc="Predictions", unit="img"):
         img_path = Path(img_path_str)
@@ -331,16 +335,30 @@ def run_predictions(
         out_row["confidence"] = f"{conf:.6f}"
         output_rows.append(out_row)
 
+        # Group by folder for per-folder metadata.csv
+        rel_path = Path(img_path_str)
+        rel_dir = rel_path.parent
+        rows_by_folder.setdefault(rel_dir, []).append(
+            {
+                "image_id": img_path.name,
+                "label": str(label),
+                "confidence_score": f"{conf:.6f}",
+            }
+        )
+
         # Lưu ảnh và gradcam nếu cần
         if save_gradcam:
-            rel_path = Path(img_path_str)
             img_out_dir = output_root / rel_path.parent
-            img_out_dir.mkdir(parents=True, exist_ok=True)  # Đảm bảo thư mục tồn tại
+            img_out_dir.mkdir(parents=True, exist_ok=True)
 
-            # Lưu ảnh gốc
+            # Parse bbox từ row
+            bbox = parse_bbox_from_row(row)
+
+            # Lưu ảnh gốc với bbox vẽ lên (nếu có)
+            img_with_bbox = draw_bbox_on_image(img, bbox, color="green", width=3)
             img_out_path = img_out_dir / f"{img_path.stem}.png"
             try:
-                img.save(img_out_path, format="PNG")
+                img_with_bbox.save(img_out_path, format="PNG")
             except Exception as e:
                 print(f"[ERROR] Không thể lưu ảnh gốc {img_path.stem}: {e}")
 
@@ -410,7 +428,16 @@ def run_predictions(
                         f"[ERROR] Không thể lưu gradcam (label=0) cho {img_path.stem}: {e}"
                     )
 
-    # Lưu metadata với predictions
+    # Lưu metadata.csv cho từng thư mục con
+    for rel_dir, rows in rows_by_folder.items():
+        metadata_csv_path = output_root / rel_dir / "metadata.csv"
+        metadata_csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(metadata_csv_path, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=["image_id", "label", "confidence_score"])
+            w.writeheader()
+            w.writerows(rows)
+
+    # Lưu metadata tổng với predictions
     out_fieldnames = list(fieldnames) if fieldnames else []
     if "predict" not in out_fieldnames:
         out_fieldnames.append("predict")
@@ -424,6 +451,7 @@ def run_predictions(
         writer.writerows(output_rows)
 
     print(f"[INFO] Đã lưu kết quả dự đoán: {output_csv_path}")
+    print(f"[INFO] Đã lưu metadata.csv cho {len(rows_by_folder)} thư mục con")
 
     return predictions_map, output_rows
 

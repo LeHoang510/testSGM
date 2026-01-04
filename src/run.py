@@ -214,6 +214,7 @@ def run_predictions(
     fixed_csv_path: Path,
     pretrained_model_path: str,
     output_folder: str,
+    gt_map: Dict = None,  # Add gt_map parameter
     device: str = None,
     save_gradcam: bool = True,
 ) -> Tuple[Dict, List[Dict]]:
@@ -237,12 +238,11 @@ def run_predictions(
         load_full_model(pretrained_model_path)
     )
     model = model.to(dev).eval()
-    target_layer = gradcam_layer or "layer4"  # <-- Thêm dòng này
+    target_layer = gradcam_layer or "layer4"
     preprocess = build_preprocess(tuple(input_size), normalize)
 
     # Đọc fixed CSV
     image_list = []
-    gt_map = {}
     with open(fixed_csv_path, "r", newline="", encoding="utf-8") as f:
         rdr = csv.DictReader(f)
         fieldnames = rdr.fieldnames if rdr.fieldnames else []
@@ -261,147 +261,171 @@ def run_predictions(
                 row.get(image_path_key, "") if image_path_key else row.get(link_key, "")
             )
             img_path_str = img_path_str.strip()
-
-            # Chuẩn hóa đường dẫn: thay \ thành /
             img_path_str = img_path_str.replace("\\", "/")
 
             if img_path_str:
                 image_list.append((img_path_str, row))
 
-                # Lấy ground truth label
-                cancer_val = row.get("cancer", "").strip()
-                try:
-                    gt_label = int(float(cancer_val))
-                    gt_map[img_path_str] = gt_label
-                except Exception:
-                    pass
+    # Group images by folder
+    images_by_folder = defaultdict(list)
+    for img_path_str, row in image_list:
+        rel_path = Path(img_path_str)
+        folder_key = rel_path.parent
+        images_by_folder[folder_key].append((img_path_str, row))
 
     # Chạy predictions
     predictions_map = {}
     output_rows = []
-    folder_metadata = defaultdict(list)  # Group metadata by folder
 
-    for img_path_str, row in tqdm(image_list, desc="Predictions", unit="img"):
-        img_path = Path(img_path_str)
-        if not img_path.is_absolute():
-            img_path = dataset_root / img_path
+    # Process each folder
+    for folder_key in tqdm(
+        sorted(images_by_folder.keys()), desc="Processing folders", unit="folder"
+    ):
+        folder_metadata = []
 
-        if not img_path.exists():
-            print(f"[WARN] Không tìm thấy ảnh: {img_path}")
-            continue
+        for img_path_str, row in tqdm(
+            images_by_folder[folder_key],
+            desc=f"  {folder_key}",
+            unit="img",
+            leave=False,
+        ):
+            img_path = Path(img_path_str)
+            if not img_path.is_absolute():
+                img_path = dataset_root / img_path
 
-        # Load và predict
-        img = safe_convert_to_rgb(Image.open(img_path))
-        x = preprocess(img).unsqueeze(0).to(dev)
+            if not img_path.exists():
+                print(f"[WARN] Không tìm thấy ảnh: {img_path}")
+                continue
 
-        with torch.no_grad():
-            logits = model(x)
+            # Load và predict
+            img = safe_convert_to_rgb(Image.open(img_path))
+            x = preprocess(img).unsqueeze(0).to(dev)
 
-        label, conf, _ = predict_binary_label_and_confidence(logits)
+            with torch.no_grad():
+                logits = model(x)
 
-        # Lưu kết quả
-        predictions_map[img_path_str] = (label, conf)
+            label, conf, _ = predict_binary_label_and_confidence(logits)
 
-        # Tạo output row
-        out_row = row.copy()
-        out_row["predict"] = str(label)
-        out_row["confidence"] = f"{conf:.6f}"
-        output_rows.append(out_row)
+            # Lưu kết quả
+            predictions_map[img_path_str] = (label, conf)
 
-        # Group by folder for per-folder metadata
-        rel_path = Path(img_path_str)
-        folder_key = rel_path.parent
-        folder_metadata[folder_key].append(
-            {
-                "image_id": img_path.name,
-                "label": str(label),
-                "confidence_score": f"{conf:.6f}",
-            }
-        )
+            # Tạo output row
+            out_row = row.copy()
+            out_row["predict"] = str(label)
+            out_row["confidence"] = f"{conf:.6f}"
+            output_rows.append(out_row)
 
-        # Lưu ảnh và gradcam nếu cần
-        if save_gradcam:
-            img_out_dir = output_root / rel_path.parent
-            img_out_dir.mkdir(parents=True, exist_ok=True)
+            # Get ground truth for this image
+            gt_label = gt_map.get(img_path_str, "") if gt_map else ""
 
-            # Parse bbxs và vẽ lên ảnh gốc
-            bbxs_str = row.get("bbxs", "[]")
-            bbxs = parse_bbxs_from_string(bbxs_str)
-            if bbxs:
-                img_with_bbox = draw_bboxes_on_image(img, bbxs, color="red", width=3)
-            else:
-                img_with_bbox = img
+            # Add to folder metadata with ground truth
+            folder_metadata.append(
+                {
+                    "image_id": img_path.name,
+                    "ground_truth": str(gt_label) if gt_label != "" else "",
+                    "label": str(label),
+                    "confidence_score": f"{conf:.6f}",
+                }
+            )
 
-            # Lưu ảnh gốc (có bbox nếu có)
-            img_out_path = img_out_dir / f"{img_path.stem}.png"
-            try:
-                img_with_bbox.save(img_out_path, format="PNG")
-            except Exception as e:
-                print(f"[ERROR] Không thể lưu ảnh gốc {img_path.stem}: {e}")
+            # Lưu ảnh và gradcam nếu cần
+            if save_gradcam:
+                img_out_dir = output_root / folder_key
+                img_out_dir.mkdir(parents=True, exist_ok=True)
 
-            # Tạo và lưu gradcam
-            gradcam_out_path = img_out_dir / f"{img_path.stem}_gradcam.png"
-            if label == 1:
+                # Parse bbxs và vẽ lên ảnh gốc
+                bbxs_str = row.get("bbxs", "[]")
+                bbxs = parse_bbxs_from_string(bbxs_str)
+                if bbxs:
+                    img_with_bbox = draw_bboxes_on_image(
+                        img, bbxs, color="red", width=3
+                    )
+                else:
+                    img_with_bbox = img
+
+                # Lưu ảnh gốc (có bbox nếu có)
+                img_out_path = img_out_dir / f"{img_path.stem}.png"
                 try:
-                    if arch_type is None or str(arch_type).lower() == "based":
-                        cam = gradcam_heatmap_based(model, x, target_layer, class_idx=1)
-                        overlay = overlay_otsu(img, cam, alpha=0.55)
-                        overlay.save(gradcam_out_path, format="PNG")
-                    else:
-                        try:
-                            from src.gradcam.gradcam_utils_patch import (
-                                pre_mil_gradcam,
-                                mil_gradcam,
-                            )
-                            import numpy as np
+                    img_with_bbox.save(img_out_path, format="PNG")
+                except Exception as e:
+                    print(f"[ERROR] Không thể lưu ảnh gốc {img_path.stem}: {e}")
 
-                            model_tuple = (
-                                model,
-                                tuple(input_size),
-                                model_name,
-                                target_layer,
-                                normalize,
-                                num_patches,
-                                arch_type,
+                # Tạo và lưu gradcam
+                gradcam_out_path = img_out_dir / f"{img_path.stem}_gradcam.png"
+                if label == 1:
+                    try:
+                        if arch_type is None or str(arch_type).lower() == "based":
+                            cam = gradcam_heatmap_based(
+                                model, x, target_layer, class_idx=1
                             )
-                            (
-                                model_out,
-                                input_tensor,
-                                img0,
-                                layer0,
-                                class_idx0,
-                                pred_class0,
-                                prob0,
-                            ) = pre_mil_gradcam(model_tuple, str(img_path))
-                            cam = mil_gradcam(
-                                model_out, input_tensor, layer0, class_idx=1
-                            )
-                            if cam.ndim == 3:
-                                cam = cam.max(axis=0).astype(np.uint8)
                             overlay = overlay_otsu(img, cam, alpha=0.55)
                             overlay.save(gradcam_out_path, format="PNG")
-                        except Exception as e_mil:
-                            print(
-                                f"[WARN] MIL Gradcam failed for {img_path.stem}: {e_mil}, saving original"
-                            )
+                        else:
+                            try:
+                                from src.gradcam.gradcam_utils_patch import (
+                                    pre_mil_gradcam,
+                                    mil_gradcam,
+                                )
+                                import numpy as np
+
+                                model_tuple = (
+                                    model,
+                                    tuple(input_size),
+                                    model_name,
+                                    target_layer,
+                                    normalize,
+                                    num_patches,
+                                    arch_type,
+                                )
+                                (
+                                    model_out,
+                                    input_tensor,
+                                    img0,
+                                    layer0,
+                                    class_idx0,
+                                    pred_class0,
+                                    prob0,
+                                ) = pre_mil_gradcam(model_tuple, str(img_path))
+                                cam = mil_gradcam(
+                                    model_out, input_tensor, layer0, class_idx=1
+                                )
+                                if cam.ndim == 3:
+                                    cam = cam.max(axis=0).astype(np.uint8)
+                                overlay = overlay_otsu(img, cam, alpha=0.55)
+                                overlay.save(gradcam_out_path, format="PNG")
+                            except Exception as e_mil:
+                                print(
+                                    f"[WARN] MIL Gradcam failed for {img_path.stem}: {e_mil}, saving original"
+                                )
+                                img.save(gradcam_out_path, format="PNG")
+                    except Exception as e:
+                        print(
+                            f"[WARN] Gradcam failed for {img_path.stem}: {e}, saving original"
+                        )
+                        try:
                             img.save(gradcam_out_path, format="PNG")
-                except Exception as e:
-                    print(
-                        f"[WARN] Gradcam failed for {img_path.stem}: {e}, saving original"
-                    )
+                        except Exception as e_save:
+                            print(
+                                f"[ERROR] Không thể lưu gradcam cho {img_path.stem}: {e_save}"
+                            )
+                else:
                     try:
                         img.save(gradcam_out_path, format="PNG")
-                    except Exception as e_save:
+                    except Exception as e:
                         print(
-                            f"[ERROR] Không thể lưu gradcam cho {img_path.stem}: {e_save}"
+                            f"[ERROR] Không thể lưu gradcam (label=0) cho {img_path.stem}: {e}"
                         )
-            else:
-                try:
-                    img.save(gradcam_out_path, format="PNG")
-                except Exception as e:
-                    print(
-                        f"[ERROR] Không thể lưu gradcam (label=0) cho {img_path.stem}: {e}"
-                    )
+
+        # Save metadata.csv for this folder immediately after processing all images
+        folder_csv_path = output_root / folder_key / "metadata.csv"
+        folder_csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(folder_csv_path, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(
+                f, fieldnames=["image_id", "ground_truth", "label", "confidence_score"]
+            )
+            w.writeheader()
+            w.writerows(folder_metadata)
+        print(f"[INFO] Đã lưu metadata.csv cho folder: {folder_key}")
 
     # Lưu metadata.csv tổng
     out_fieldnames = list(fieldnames) if fieldnames else []
@@ -416,18 +440,7 @@ def run_predictions(
         writer.writeheader()
         writer.writerows(output_rows)
 
-    print(f"[INFO] Đã lưu kết quả dự đoán: {output_csv_path}")
-
-    # Lưu metadata.csv riêng cho mỗi thư mục
-    for folder_key, rows in folder_metadata.items():
-        folder_csv_path = output_root / folder_key / "metadata.csv"
-        folder_csv_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(folder_csv_path, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=["image_id", "label", "confidence_score"])
-            w.writeheader()
-            w.writerows(rows)
-
-    print(f"[INFO] Đã lưu metadata.csv riêng cho {len(folder_metadata)} thư mục")
+    print(f"[INFO] Đã lưu kết quả dự đoán tổng: {output_csv_path}")
 
     return predictions_map, output_rows
 
@@ -610,6 +623,7 @@ def main(
         fixed_csv_path=fixed_csv_path,
         pretrained_model_path=pretrained_model_path,
         output_folder=output_folder,
+        gt_map=gt_map,  # Pass gt_map
         device=device,
         save_gradcam=save_gradcam,
     )

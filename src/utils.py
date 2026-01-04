@@ -1,7 +1,7 @@
 import hashlib
+import csv
 from pathlib import Path
 from typing import Dict, List, Tuple
-import csv
 
 
 def file_hash(filepath: Path) -> str:
@@ -70,3 +70,31 @@ def print_image_matching_stats(dataset_folder: str, ground_truth_path: str):
     print(
         f"[INFO] Số lượng file ảnh khớp với image_id: {len(matched)} / {len(image_files_names)} ({len(matched) / max(1, len(image_files_names)) * 100:.2f}%)"
     )
+
+
+def filter_large_bboxes(
+    bbxs: List[Tuple[float, float, float, float]],
+    img_width: float,
+    img_height: float,
+    threshold: float = 0.9,
+) -> List[Tuple[float, float, float, float]]:
+    """
+    Lọc bỏ các bbox chiếm trên threshold (mặc định 90%) diện tích ảnh
+    """
+    if not bbxs:
+        return bbxs
+
+    img_area = img_width * img_height
+    if img_area == 0:
+        return bbxs
+
+    filtered = []
+    for bbox in bbxs:
+        if len(bbox) == 4:
+            x, y, w, h = bbox
+            bbox_area = w * h
+            ratio = bbox_area / img_area
+            if ratio < threshold:
+                filtered.append(bbox)
+
+    return filtered

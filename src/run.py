@@ -24,6 +24,7 @@ from src.utils import (
     find_image_path,
     print_stats,
     print_image_matching_stats,
+    filter_large_bboxes,
 )
 from src.plot import parse_bbxs_from_string, draw_bboxes_on_image
 from sklearn.metrics import (
@@ -33,34 +34,6 @@ from sklearn.metrics import (
     recall_score,
     confusion_matrix,
 )
-
-
-def find_image_path(dataset_folder: Path, image_id: str) -> str:
-    """
-    Tìm kiếm file ảnh thực tế trong dataset_folder dựa vào image_id.
-    Ưu tiên: dataset_folder/patientID/image_id, nếu không có thì search toàn bộ subfolder.
-    """
-    # Ưu tiên tìm theo cấu trúc dataset_folder/patientID/image_id
-    patient_id = image_id.split("_")[0]
-    candidate = dataset_folder / patient_id / image_id
-    if candidate.exists():
-        return str(candidate.relative_to(dataset_folder))
-    # Nếu không có, search toàn bộ subfolder
-    for p in dataset_folder.rglob(image_id):
-        try:
-            return str(p.relative_to(dataset_folder))
-        except Exception:
-            continue
-    return ""  # Không tìm thấy
-
-
-def file_hash(filepath: Path) -> str:
-    """Tính hash của file để so sánh"""
-    h = hashlib.md5()
-    with open(filepath, "rb") as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def load_and_process_csv(
@@ -166,8 +139,15 @@ def load_and_process_csv(
     for group_key, info in grouped_rows.items():
         row = info["row"].copy()
 
-        # Thêm cột bbxs
-        row["bbxs"] = str(info["bbxs"])
+        # Lọc bỏ các bbox chiếm trên 90% diện tích
+        img_width = float(row.get("image_width", 0))
+        img_height = float(row.get("image_height", 0))
+        filtered_bbxs = filter_large_bboxes(
+            info["bbxs"], img_width, img_height, threshold=0.9
+        )
+
+        # Thêm cột bbxs (đã lọc)
+        row["bbxs"] = str(filtered_bbxs)
 
         # Thêm cột split
         row["split"] = "test"
@@ -227,17 +207,6 @@ def load_and_process_csv(
     }
 
     return fixed_csv_path, processed_rows, stats
-
-
-def print_stats(stats: Dict):
-    """Bước 3: In thống kê về dataset"""
-    print("\n" + "=" * 60)
-    print("THỐNG KÊ DATASET")
-    print("=" * 60)
-    print(f"Tổng số ảnh: {stats['total_images']}")
-    print(f"Positive: {stats['positive_count']} ({stats['positive_ratio'] * 100:.2f}%)")
-    print(f"Negative: {stats['negative_count']} ({stats['negative_ratio'] * 100:.2f}%)")
-    print("=" * 60 + "\n")
 
 
 def run_predictions(

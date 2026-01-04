@@ -335,13 +335,16 @@ def run_predictions(
         if save_gradcam:
             rel_path = Path(img_path_str)
             img_out_dir = output_root / rel_path.parent / "img"
-            img_out_dir.mkdir(parents=True, exist_ok=True)
+            img_out_dir.mkdir(parents=True, exist_ok=True)  # Đảm bảo thư mục tồn tại
 
             # Lưu ảnh gốc
             img_out_path = img_out_dir / f"{img_path.stem}.png"
-            img.save(img_out_path, format="PNG")
+            try:
+                img.save(img_out_path, format="PNG")
+            except Exception as e:
+                print(f"[ERROR] Không thể lưu ảnh gốc {img_path.stem}: {e}")
 
-            # Tạo gradcam nếu label == 1
+            # Tạo và lưu gradcam
             gradcam_out_path = img_out_dir / f"{img_path.stem}_gradcam.png"
             if label == 1:
                 try:
@@ -356,6 +359,7 @@ def run_predictions(
                                 pre_mil_gradcam,
                                 mil_gradcam,
                             )
+                            import numpy as np
 
                             model_tuple = (
                                 model,
@@ -382,17 +386,29 @@ def run_predictions(
                                 cam = cam.max(axis=0).astype(np.uint8)
                             overlay = overlay_otsu(img, cam, alpha=0.55)
                             overlay.save(gradcam_out_path, format="PNG")
-                        except Exception:
-                            # Fallback: save original image
+                        except Exception as e_mil:
+                            print(
+                                f"[WARN] MIL Gradcam failed for {img_path.stem}: {e_mil}, saving original"
+                            )
                             img.save(gradcam_out_path, format="PNG")
                 except Exception as e:
                     print(
                         f"[WARN] Gradcam failed for {img_path.stem}: {e}, saving original"
                     )
-                    img.save(gradcam_out_path, format="PNG")
+                    try:
+                        img.save(gradcam_out_path, format="PNG")
+                    except Exception as e_save:
+                        print(
+                            f"[ERROR] Không thể lưu gradcam cho {img_path.stem}: {e_save}"
+                        )
             else:
-                # Label == 0: save original image
-                img.save(gradcam_out_path, format="PNG")
+                # Label == 0: save original image as gradcam
+                try:
+                    img.save(gradcam_out_path, format="PNG")
+                except Exception as e:
+                    print(
+                        f"[ERROR] Không thể lưu gradcam (label=0) cho {img_path.stem}: {e}"
+                    )
 
     # Lưu metadata với predictions
     out_fieldnames = list(fieldnames) if fieldnames else []

@@ -334,7 +334,7 @@ def run_predictions(
         # Lưu ảnh và gradcam nếu cần
         if save_gradcam:
             rel_path = Path(img_path_str)
-            img_out_dir = output_root / rel_path.parent / "img"
+            img_out_dir = output_root / rel_path.parent
             img_out_dir.mkdir(parents=True, exist_ok=True)  # Đảm bảo thư mục tồn tại
 
             # Lưu ảnh gốc

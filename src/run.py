@@ -77,6 +77,15 @@ def load_and_process_csv(
             if not group_key:
                 continue
 
+            # Chuẩn hóa đường dẫn: thay \ thành /
+            group_key = group_key.replace("\\", "/")
+
+            # Cập nhật lại row với đường dẫn đã chuẩn hóa
+            if image_path_key:
+                row[image_path_key] = group_key
+            elif link_key:
+                row[link_key] = group_key
+
             if group_key not in grouped_rows:
                 grouped_rows[group_key] = {"row": row.copy(), "bbxs": []}
 
@@ -210,6 +219,10 @@ def run_predictions(
                 row.get(image_path_key, "") if image_path_key else row.get(link_key, "")
             )
             img_path_str = img_path_str.strip()
+
+            # Chuẩn hóa đường dẫn: thay \ thành /
+            img_path_str = img_path_str.replace("\\", "/")
+
             if img_path_str:
                 image_list.append((img_path_str, row))
 
@@ -395,7 +408,7 @@ def main(
             img_path_str = (
                 row.get(image_path_key, "") if image_path_key else row.get(link_key, "")
             )
-            img_path_str = img_path_str.strip()
+            img_path_str = img_path_str.strip().replace("\\", "/")
             cancer_val = row.get("cancer", "").strip()
             try:
                 gt_label = int(float(cancer_val))

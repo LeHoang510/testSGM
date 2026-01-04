@@ -208,6 +208,11 @@ def evaluate_model(
             matched_count += 1
 
     if matched_count == 0:
+        print(
+            "[ERROR] No overlapping image_id between predictions and ground-truth CSV."
+        )
+        print(f"  Predictions image_id sample: {list(preds_map.keys())[:10]}")
+        print(f"  Ground-truth image_id sample: {list(gt_map.keys())[:10]}")
         raise RuntimeError(
             "No overlapping image_id between predictions and ground-truth CSV."
         )

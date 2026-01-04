@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 from typing import Dict, List, Tuple
 from collections import defaultdict
+import hashlib
 
 import torch
 from tqdm import tqdm
@@ -15,6 +16,8 @@ from src.processing import (
     safe_convert_to_rgb,
     build_preprocess,
     predict_binary_label_and_confidence,
+    gradcam_heatmap_based,
+    overlay_otsu,
 )
 from sklearn.metrics import (
     classification_report,
@@ -42,6 +45,15 @@ def find_image_path(dataset_folder: Path, image_id: str) -> str:
         except Exception:
             continue
     return ""  # Không tìm thấy
+
+
+def file_hash(filepath: Path) -> str:
+    """Tính hash của file để so sánh"""
+    h = hashlib.md5()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def load_and_process_csv(
@@ -167,20 +179,32 @@ def load_and_process_csv(
 
     # Lưu file metadata_fixed.csv
     fixed_csv_path = gt_csv_path.parent / f"{gt_csv_path.stem}_fixed.csv"
-    out_fieldnames = list(fieldnames)
-    if "bbxs" not in out_fieldnames:
-        out_fieldnames.append("bbxs")
-    if "split" not in out_fieldnames:
-        out_fieldnames.append("split")
-    if "cancer" not in out_fieldnames:
-        out_fieldnames.append("cancer")
 
-    with open(fixed_csv_path, "w", newline="", encoding="utf-8") as fout:
-        writer = csv.DictWriter(fout, fieldnames=out_fieldnames)
-        writer.writeheader()
-        writer.writerows(processed_rows)
+    # Kiểm tra nếu file fixed giống file gốc thì không cần lưu
+    need_save = True
+    if fixed_csv_path.exists():
+        try:
+            if file_hash(gt_csv_path) == file_hash(fixed_csv_path):
+                print(f"[INFO] File fixed giống file gốc, không cần lưu lại.")
+                need_save = False
+        except Exception:
+            pass
 
-    print(f"[INFO] Đã lưu file ground-truth đã xử lý: {fixed_csv_path}")
+    if need_save:
+        out_fieldnames = list(fieldnames)
+        if "bbxs" not in out_fieldnames:
+            out_fieldnames.append("bbxs")
+        if "split" not in out_fieldnames:
+            out_fieldnames.append("split")
+        if "cancer" not in out_fieldnames:
+            out_fieldnames.append("cancer")
+
+        with open(fixed_csv_path, "w", newline="", encoding="utf-8") as fout:
+            writer = csv.DictWriter(fout, fieldnames=out_fieldnames)
+            writer.writeheader()
+            writer.writerows(processed_rows)
+
+        print(f"[INFO] Đã lưu file ground-truth đã xử lý: {fixed_csv_path}")
 
     # Tính stats
     total_images = len(processed_rows)
@@ -215,6 +239,7 @@ def run_predictions(
     pretrained_model_path: str,
     output_folder: str,
     device: str = None,
+    save_gradcam: bool = True,
 ) -> Tuple[Dict, List[Dict]]:
     """
     Bước 4: Chạy model qua tất cả ảnh, lưu kết quả
@@ -236,6 +261,7 @@ def run_predictions(
         load_full_model(pretrained_model_path)
     )
     model = model.to(dev).eval()
+    target_layer = gradcam_layer or "layer4"  # <-- Thêm dòng này
     preprocess = build_preprocess(tuple(input_size), normalize)
 
     # Đọc fixed CSV
@@ -304,6 +330,69 @@ def run_predictions(
         out_row["predict"] = str(label)
         out_row["confidence"] = f"{conf:.6f}"
         output_rows.append(out_row)
+
+        # Lưu ảnh và gradcam nếu cần
+        if save_gradcam:
+            rel_path = Path(img_path_str)
+            img_out_dir = output_root / rel_path.parent / "img"
+            img_out_dir.mkdir(parents=True, exist_ok=True)
+
+            # Lưu ảnh gốc
+            img_out_path = img_out_dir / f"{img_path.stem}.png"
+            img.save(img_out_path, format="PNG")
+
+            # Tạo gradcam nếu label == 1
+            gradcam_out_path = img_out_dir / f"{img_path.stem}_gradcam.png"
+            if label == 1:
+                try:
+                    if arch_type is None or str(arch_type).lower() == "based":
+                        cam = gradcam_heatmap_based(model, x, target_layer, class_idx=1)
+                        overlay = overlay_otsu(img, cam, alpha=0.55)
+                        overlay.save(gradcam_out_path, format="PNG")
+                    else:
+                        # Patch/MIL: use your own pipeline if available
+                        try:
+                            from src.gradcam.gradcam_utils_patch import (
+                                pre_mil_gradcam,
+                                mil_gradcam,
+                            )
+
+                            model_tuple = (
+                                model,
+                                tuple(input_size),
+                                model_name,
+                                target_layer,
+                                normalize,
+                                num_patches,
+                                arch_type,
+                            )
+                            (
+                                model_out,
+                                input_tensor,
+                                img0,
+                                layer0,
+                                class_idx0,
+                                pred_class0,
+                                prob0,
+                            ) = pre_mil_gradcam(model_tuple, str(img_path))
+                            cam = mil_gradcam(
+                                model_out, input_tensor, layer0, class_idx=1
+                            )
+                            if cam.ndim == 3:
+                                cam = cam.max(axis=0).astype(np.uint8)
+                            overlay = overlay_otsu(img, cam, alpha=0.55)
+                            overlay.save(gradcam_out_path, format="PNG")
+                        except Exception:
+                            # Fallback: save original image
+                            img.save(gradcam_out_path, format="PNG")
+                except Exception as e:
+                    print(
+                        f"[WARN] Gradcam failed for {img_path.stem}: {e}, saving original"
+                    )
+                    img.save(gradcam_out_path, format="PNG")
+            else:
+                # Label == 0: save original image
+                img.save(gradcam_out_path, format="PNG")
 
     # Lưu metadata với predictions
     out_fieldnames = list(fieldnames) if fieldnames else []
@@ -446,6 +535,7 @@ def main(
     pretrained_model_path: str,
     output_folder: str,
     device: str = None,
+    save_gradcam: bool = True,
 ):
     """Main workflow"""
     print("\n" + "=" * 60)
@@ -501,6 +591,7 @@ def main(
         pretrained_model_path=pretrained_model_path,
         output_folder=output_folder,
         device=device,
+        save_gradcam=save_gradcam,
     )
 
     # Bước 5: Đánh giá
@@ -535,6 +626,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device", type=str, default=None, help="Device để chạy model (cuda/cpu)"
     )
+    parser.add_argument(
+        "--save_gradcam", action="store_true", help="Lưu ảnh gradcam và ảnh gốc"
+    )
 
     args = parser.parse_args()
 
@@ -544,4 +638,5 @@ if __name__ == "__main__":
         pretrained_model_path=args.pretrained_model_path,
         output_folder=args.output_folder,
         device=args.device,
+        save_gradcam=args.save_gradcam,
     )

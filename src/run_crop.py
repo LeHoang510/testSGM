@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from src.pre_process import SGM_preprocess
-from utils import find_image_path, print_stats
-from csv_processor import load_and_process_csv
+from src.utils import find_image_path, print_stats
+from src.csv_processor import load_and_process_csv
 from PIL import Image
 
 

@@ -141,68 +141,58 @@ def run_predictions(
                     print(f"[ERROR] Không thể lưu ảnh gốc {img_path.stem}: {e}")
 
                 gradcam_out_path = img_out_dir / f"{img_path.stem}_gradcam.png"
-                if label == 1:
-                    try:
-                        if arch_type is None or str(arch_type).lower() == "based":
-                            cam = gradcam_heatmap_based(
-                                model, x, target_layer, class_idx=1
+                try:
+                    if arch_type is None or str(arch_type).lower() == "based":
+                        cam = gradcam_heatmap_based(model, x, target_layer, class_idx=1)
+                        overlay = overlay_otsu(img, cam, alpha=0.55)
+                        overlay.save(gradcam_out_path, format="PNG")
+                    else:
+                        try:
+                            from src.gradcam.gradcam_utils_patch import (
+                                pre_mil_gradcam,
+                                mil_gradcam,
                             )
+                            import numpy as np
+
+                            model_tuple = (
+                                model,
+                                tuple(input_size),
+                                model_name,
+                                target_layer,
+                                normalize,
+                                num_patches,
+                                arch_type,
+                            )
+                            (
+                                model_out,
+                                input_tensor,
+                                img0,
+                                layer0,
+                                class_idx0,
+                                pred_class0,
+                                prob0,
+                            ) = pre_mil_gradcam(model_tuple, str(img_path))
+                            cam = mil_gradcam(
+                                model_out, input_tensor, layer0, class_idx=1
+                            )
+                            if cam.ndim == 3:
+                                cam = cam.max(axis=0).astype(np.uint8)
                             overlay = overlay_otsu(img, cam, alpha=0.55)
                             overlay.save(gradcam_out_path, format="PNG")
-                        else:
-                            try:
-                                from src.gradcam.gradcam_utils_patch import (
-                                    pre_mil_gradcam,
-                                    mil_gradcam,
-                                )
-                                import numpy as np
-
-                                model_tuple = (
-                                    model,
-                                    tuple(input_size),
-                                    model_name,
-                                    target_layer,
-                                    normalize,
-                                    num_patches,
-                                    arch_type,
-                                )
-                                (
-                                    model_out,
-                                    input_tensor,
-                                    img0,
-                                    layer0,
-                                    class_idx0,
-                                    pred_class0,
-                                    prob0,
-                                ) = pre_mil_gradcam(model_tuple, str(img_path))
-                                cam = mil_gradcam(
-                                    model_out, input_tensor, layer0, class_idx=1
-                                )
-                                if cam.ndim == 3:
-                                    cam = cam.max(axis=0).astype(np.uint8)
-                                overlay = overlay_otsu(img, cam, alpha=0.55)
-                                overlay.save(gradcam_out_path, format="PNG")
-                            except Exception as e_mil:
-                                print(
-                                    f"[WARN] MIL Gradcam failed for {img_path.stem}: {e_mil}, saving original"
-                                )
-                                img.save(gradcam_out_path, format="PNG")
-                    except Exception as e:
-                        print(
-                            f"[WARN] Gradcam failed for {img_path.stem}: {e}, saving original"
-                        )
-                        try:
-                            img.save(gradcam_out_path, format="PNG")
-                        except Exception as e_save:
+                        except Exception as e_mil:
                             print(
-                                f"[ERROR] Không thể lưu gradcam cho {img_path.stem}: {e_save}"
+                                f"[WARN] MIL Gradcam failed for {img_path.stem}: {e_mil}, saving original"
                             )
-                else:
+                            img.save(gradcam_out_path, format="PNG")
+                except Exception as e:
+                    print(
+                        f"[WARN] Gradcam failed for {img_path.stem}: {e}, saving original"
+                    )
                     try:
                         img.save(gradcam_out_path, format="PNG")
-                    except Exception as e:
+                    except Exception as e_save:
                         print(
-                            f"[ERROR] Không thể lưu gradcam (label=0) cho {img_path.stem}: {e}"
+                            f"[ERROR] Không thể lưu gradcam cho {img_path.stem}: {e_save}"
                         )
 
         folder_csv_path = output_root / folder_key / "metadata.csv"

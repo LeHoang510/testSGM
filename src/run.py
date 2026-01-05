@@ -19,21 +19,10 @@ from src.processing import (
     gradcam_heatmap_based,
     overlay_otsu,
 )
-from src.utils import (
-    file_hash,
-    find_image_path,
-    print_stats,
-    print_image_matching_stats,
-    filter_large_bboxes,
-)
+from src.utils import file_hash, find_image_path, print_stats, filter_large_bboxes
 from src.plot import parse_bbxs_from_string, draw_bboxes_on_image
-from sklearn.metrics import (
-    classification_report,
-    roc_auc_score,
-    precision_score,
-    recall_score,
-    confusion_matrix,
-)
+from src.metrics import evaluate_predictions
+from src.image_matching import print_image_matching_stats
 
 
 def load_and_process_csv(
@@ -426,123 +415,6 @@ def run_predictions(
     print(f"[INFO] Đã lưu kết quả dự đoán tổng: {output_csv_path}")
 
     return predictions_map, output_rows
-
-
-def evaluate_predictions(predictions_map: Dict, gt_map: Dict):
-    """Bước 5: Đánh giá kết quả predictions"""
-    all_preds = []
-    all_labels = []
-    all_probs = []
-
-    for img_path, (pred_label, conf) in predictions_map.items():
-        if img_path in gt_map:
-            gt_label = gt_map[img_path]
-            all_preds.append(pred_label)
-            all_labels.append(gt_label)
-            all_probs.append(float(pred_label))
-
-    if len(all_preds) == 0:
-        print("[ERROR] Không có dữ liệu để đánh giá")
-        return
-
-    # Tính các chỉ số
-    total = len(all_labels)
-    correct = sum(1 for p, l in zip(all_preds, all_labels) if p == l)
-    acc = correct / total
-
-    try:
-        auc = (
-            roc_auc_score(all_labels, all_probs) if len(set(all_labels)) == 2 else None
-        )
-    except Exception:
-        auc = None
-
-    try:
-        precision = precision_score(
-            all_labels,
-            all_preds,
-            average="binary" if len(set(all_labels)) == 2 else "macro",
-            zero_division=0,
-        )
-    except Exception:
-        precision = 0.0
-
-    try:
-        recall = recall_score(
-            all_labels,
-            all_preds,
-            average="binary" if len(set(all_labels)) == 2 else "macro",
-            zero_division=0,
-        )
-    except Exception:
-        recall = 0.0
-
-    cm = confusion_matrix(all_labels, all_preds)
-
-    if cm.shape == (2, 2):
-        tn, fp, fn, tp = cm.ravel()
-        sen = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        spec = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-    else:
-        sen = recall
-        spec = None
-
-    # In kết quả
-    print("\n" + "=" * 60)
-    print("KẾT QUẢ ĐÁNH GIÁ")
-    print("=" * 60)
-    acc_str = f"Accuracy: {acc * 100:.2f}%"
-    if auc is not None:
-        acc_str += f" | AUC: {auc * 100:.2f}%"
-    print(acc_str)
-
-    metrics_str = (
-        f"Precision: {precision * 100:.2f}% | Sensitivity: {recall * 100:.2f}%"
-    )
-    if spec is not None:
-        metrics_str += f" | Specificity: {spec * 100:.2f}%"
-    print(metrics_str)
-    print("=" * 60)
-
-    print("\nClassification Report:")
-    print(classification_report(all_labels, all_preds, digits=4, zero_division=0))
-
-    print("Confusion Matrix:")
-    print(cm)
-    print("=" * 60 + "\n")
-
-
-def print_image_matching_stats(dataset_folder: str, ground_truth_path: str):
-    """
-    Tìm tất cả file ảnh trong dataset_folder, so khớp với image_id trong CSV,
-    in ra số lượng và tỷ lệ khớp.
-    """
-    dataset_root = Path(dataset_folder).expanduser().resolve()
-    # Tìm tất cả file ảnh
-    image_files = []
-    for ext in ("*.png", "*.jpg", "*.jpeg"):
-        image_files.extend(dataset_root.rglob(ext))
-    # Lấy tên file (bao gồm cả đuôi)
-    image_files_names = [p.name for p in image_files]
-    print(f"[INFO] Tổng số file ảnh tìm thấy: {len(image_files_names)}")
-    # Đọc image_id từ CSV
-    gt_csv_path = Path(ground_truth_path).expanduser().resolve()
-    image_ids = set()
-    with open(gt_csv_path, "r", newline="", encoding="utf-8") as f:
-        rdr = csv.DictReader(f)
-        for row in rdr:
-            img_id = row.get("image_id", "").strip()
-            if img_id:
-                image_ids.add(img_id)
-    print(f"[INFO] Tổng số image_id trong CSV: {len(image_ids)}")
-    # So khớp theo tên file (giữ nguyên đuôi)
-    matched = set(image_files_names) & image_ids
-    print(
-        f"[INFO] Số lượng image_id khớp với file ảnh: {len(matched)} / {len(image_ids)} ({len(matched) / max(1, len(image_ids)) * 100:.2f}%)"
-    )
-    print(
-        f"[INFO] Số lượng file ảnh khớp với image_id: {len(matched)} / {len(image_files_names)} ({len(matched) / max(1, len(image_files_names)) * 100:.2f}%)"
-    )
 
 
 def main(

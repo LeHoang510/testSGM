@@ -37,7 +37,7 @@ from sklearn.metrics import (
 
 
 def load_and_process_csv(
-    ground_truth_path: str, dataset_folder: str
+    ground_truth_path: str, dataset_folder: str, ready_csv: bool = False
 ) -> Tuple[Path, List[Dict], Dict]:
     """
     Bước 1: Đọc CSV, group theo image_path/link, gộp bbx, tạo cột cancer từ Classification
@@ -90,11 +90,8 @@ def load_and_process_csv(
             if not group_key:
                 continue
 
-            # Chuẩn hóa đường dẫn: thay \ thành /
             group_key = group_key.replace("\\", "/")
-            # --- BỔ SUNG: cập nhật lại image_path/link nếu thiếu hoặc sai ---
             image_id = row.get("image_id", "").strip()
-            # Nếu image_path/link rỗng hoặc file không tồn tại thì tìm lại
             need_update = False
             if image_path_key:
                 img_path_val = row.get(image_path_key, "").strip().replace("\\", "/")
@@ -116,12 +113,10 @@ def load_and_process_csv(
                     elif link_key:
                         row[link_key] = found_path
                         group_key = found_path
-            # --- END BỔ SUNG ---
 
             if group_key not in grouped_rows:
                 grouped_rows[group_key] = {"row": row.copy(), "bbxs": []}
 
-            # Collect bounding box nếu có
             if all(k in row for k in ["x", "y", "width", "height"]):
                 try:
                     bbx = (
@@ -134,40 +129,33 @@ def load_and_process_csv(
                 except Exception:
                     pass
 
-    # Xử lý và tạo metadata_fixed.csv
     processed_rows = []
     for group_key, info in grouped_rows.items():
         row = info["row"].copy()
 
-        # Lọc bỏ các bbox chiếm trên 90% diện tích
         img_width = float(row.get("image_width", 0))
         img_height = float(row.get("image_height", 0))
         filtered_bbxs = filter_large_bboxes(
             info["bbxs"], img_width, img_height, threshold=0.9
         )
 
-        # Thêm cột bbxs (đã lọc)
         row["bbxs"] = str(filtered_bbxs)
-
-        # Thêm cột split
         row["split"] = "test"
 
-        # Tạo cột cancer từ Classification nếu cần
-        if not cancer_key and classification_key:
-            classification_val = row.get(classification_key, "").strip().lower()
-            if classification_val == "normal":
-                row["cancer"] = "0"
-            elif classification_val in ["benign", "malignant"]:
-                row["cancer"] = "1"
-            else:
-                row["cancer"] = ""
+        # Nếu đã có cột cancer và ready_csv=True thì giữ nguyên, không tạo lại
+        if not ready_csv:
+            if not cancer_key and classification_key:
+                classification_val = row.get(classification_key, "").strip().lower()
+                if classification_val == "normal":
+                    row["cancer"] = "0"
+                elif classification_val in ["benign", "malignant"]:
+                    row["cancer"] = "1"
+                else:
+                    row["cancer"] = ""
 
         processed_rows.append(row)
 
-    # Lưu file metadata_fixed.csv
     fixed_csv_path = gt_csv_path.parent / f"{gt_csv_path.stem}_fixed.csv"
-
-    # Kiểm tra nếu file fixed giống file gốc thì không cần lưu
     need_save = True
     if fixed_csv_path.exists():
         try:
@@ -193,7 +181,6 @@ def load_and_process_csv(
 
         print(f"[INFO] Đã lưu file ground-truth đã xử lý: {fixed_csv_path}")
 
-    # Tính stats
     total_images = len(processed_rows)
     positive_count = sum(1 for r in processed_rows if r.get("cancer") == "1")
     negative_count = sum(1 for r in processed_rows if r.get("cancer") == "0")
@@ -565,27 +552,24 @@ def main(
     output_folder: str,
     device: str = None,
     save_gradcam: bool = True,
+    ready_csv: bool = False,
 ):
     """Main workflow"""
     print("\n" + "=" * 60)
     print("BẮT ĐẦU WORKFLOW")
     print("=" * 60 + "\n")
 
-    # Bước kiểm tra khớp ảnh và image_id
     print("[Kiểm tra khớp ảnh với image_id trong CSV]")
     print_image_matching_stats(dataset_folder, ground_truth_path)
 
-    # Bước 1 & 2: Load và xử lý CSV
     print("[Bước 1-2] Đọc và xử lý ground-truth CSV...")
     fixed_csv_path, processed_rows, stats = load_and_process_csv(
-        ground_truth_path, dataset_folder
+        ground_truth_path, dataset_folder, ready_csv=ready_csv
     )
 
-    # Bước 3: In thống kê
     if stats:
         print_stats(stats)
 
-    # Load lại từ fixed CSV để lấy gt_map
     gt_map = {}
     with open(fixed_csv_path, "r", newline="", encoding="utf-8") as f:
         rdr = csv.DictReader(f)
@@ -612,19 +596,17 @@ def main(
             except Exception:
                 pass
 
-    # Bước 4: Chạy predictions
     print("[Bước 4] Chạy model predictions...")
     predictions_map, output_rows = run_predictions(
         dataset_folder=dataset_folder,
         fixed_csv_path=fixed_csv_path,
         pretrained_model_path=pretrained_model_path,
         output_folder=output_folder,
-        gt_map=gt_map,  # Pass gt_map
+        gt_map=gt_map,
         device=device,
         save_gradcam=save_gradcam,
     )
 
-    # Bước 5: Đánh giá
     print("[Bước 5] Đánh giá kết quả...")
     evaluate_predictions(predictions_map, gt_map)
 
@@ -659,6 +641,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--save_gradcam", action="store_true", help="Lưu ảnh gradcam và ảnh gốc"
     )
+    parser.add_argument(
+        "--ready_csv",
+        action="store_true",
+        help="CSV đã có cột cancer, không cần tạo lại",
+    )
 
     args = parser.parse_args()
 
@@ -669,4 +656,5 @@ if __name__ == "__main__":
         output_folder=args.output_folder,
         device=args.device,
         save_gradcam=args.save_gradcam,
+        ready_csv=args.ready_csv,
     )

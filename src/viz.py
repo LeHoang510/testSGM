@@ -275,9 +275,10 @@ def viz_sgm_predict(
                 # compare view
                 if compare:
                     orig_path = _find_original_from_gradcam(folder, item["path"])
+                    show_concat = (label == 1) or (gt == 1)
                     if orig_path and orig_path.exists():
                         orig_img = _load_rgb(orig_path)
-                        if label == 1:
+                        if show_concat:
                             imgs.append(
                                 _concat_horiz(orig_img, grad_img)
                             )  # Positive: [orig | gradcam]

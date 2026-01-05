@@ -87,7 +87,11 @@ def _concat_horiz(img_left: Image.Image, img_right: Image.Image) -> Image.Image:
 
 
 def viz_sgm_predict(
-    root_folder: str, figsize=(18, 5), compare: bool = False, max_plot: int = 20
+    root_folder: str,
+    figsize=(18, 5),
+    compare: bool = False,
+    max_plot: int = 20,
+    output_folder: Optional[str] = None,
 ) -> None:
     """
     - Parse patterns ONLY from *_gradcam.png filenames
@@ -165,6 +169,12 @@ def viz_sgm_predict(
     if not root.exists():
         raise FileNotFoundError(f"Folder not found: {root}")
 
+    if output_folder:
+        out_dir = Path(output_folder).expanduser().resolve()
+        out_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        out_dir = None
+
     folders = sorted(
         [p for p in root.rglob("*") if p.is_dir() and (p / "metadata.csv").exists()]
     )
@@ -218,8 +228,12 @@ def viz_sgm_predict(
 
         pred_rows = []
 
+        # Collect all figures for this folder if output_folder is set
+        folder_figs = []
+        folder_titles = []
+
         for base_id in sorted(groups.keys()):
-            if plot_count >= max_plot:
+            if max_plot is not None and plot_count >= max_plot:
                 return
             g = groups[base_id]
 
@@ -284,17 +298,21 @@ def viz_sgm_predict(
                     title_colors.append("black")
 
             fig, axes = plt.subplots(1, 4, figsize=figsize)
-
-            # IMPORTANT FIX: escape '$' to avoid matplotlib mathtext crash
             fig.suptitle(_mpl_safe_text(f"{folder.name} | {base_id}"), fontsize=14)
-
             for ax, im, ttl, col in zip(axes, imgs, titles, title_colors):
                 ax.imshow(im)
                 ax.set_title(_mpl_safe_text(ttl), fontsize=10, color=col)
                 ax.axis("off")
-
             plt.tight_layout()
-            plt.show()
+
+            if out_dir:
+                # Save to output folder, one image per base_id
+                out_name = f"{folder.name}_{base_id}.png"
+                out_path = out_dir / out_name
+                fig.savefig(str(out_path))
+                plt.close(fig)
+            else:
+                plt.show()
             plot_count += 1
 
         # Save predictions to CSV (uncomment if you want)
@@ -331,15 +349,31 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--max_plot",
-        type=int,
-        default=20,
-        help="Số lượng plot tối đa (mặc định: 20)",
+        type=str,
+        default="20",
+        help="Số lượng plot tối đa (mặc định: 20), hoặc 'all' để chạy hết",
+    )
+    parser.add_argument(
+        "--output_folder",
+        type=str,
+        default=None,
+        help="Thư mục để lưu các ảnh đã plot (mỗi folder thành 1 ảnh)",
     )
 
     args = parser.parse_args()
+    # Handle max_plot: allow 'all'
+    if args.max_plot.lower() == "all":
+        max_plot = None
+    else:
+        try:
+            max_plot = int(args.max_plot)
+        except Exception:
+            max_plot = 20
+
     viz_sgm_predict(
         args.root_folder,
         figsize=tuple(args.figsize),
         compare=args.compare,
-        max_plot=args.max_plot,
+        max_plot=max_plot,
+        output_folder=args.output_folder,
     )

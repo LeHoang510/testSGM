@@ -318,10 +318,10 @@ def SGM_preprocess(
                 f"ok={processed} no_det={skipped_no_det} basic={fallback_basic} exists={skipped_exists} fail={failed}"
             )
 
-            if verbose and (idx % 50 == 0):
-                print(
-                    f"[PROGRESS] {idx}/{n} processed={processed}, no_det={skipped_no_det}, basic={fallback_basic}, failed={failed}"
-                )
+            # if verbose and (idx % 50 == 0):
+            #    print(
+            #        f"[PROGRESS] {idx}/{n} processed={processed}, no_det={skipped_no_det}, basic={fallback_basic}, failed={failed}"
+            #    )
 
         except Exception as e:
             failed += 1

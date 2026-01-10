@@ -6,6 +6,11 @@ import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = lambda x, **kwargs: x  # fallback nếu không có tqdm
+
 VIEW_ORDER = [("CC", "R"), ("CC", "L"), ("MLO", "R"), ("MLO", "L")]
 
 GRADCAM_RE = re.compile(
@@ -181,8 +186,49 @@ def viz_sgm_predict(
     if not folders:
         raise FileNotFoundError(f"No subfolder with metadata.csv found under: {root}")
 
+    # Đếm tổng số plot nếu chạy full và có output_folder để dùng tqdm
+    total_plots = 0
+    if max_plot is None and output_folder:
+        for folder in folders:
+            csv_map = None
+            gradcams = sorted(folder.glob("*_gradcam.png"))
+            groups: Dict[str, Dict[Tuple[str, str], Dict]] = {}
+            for p in gradcams:
+                parsed = _parse_gradcam_name(p.name)
+                if parsed is None:
+                    continue
+                base, view, side, idx = parsed
+                key = (view, side)
+                stem = p.name[: -len("_gradcam.png")]
+                if csv_map is None:
+                    csv_map = _read_metadata_csv(folder / "metadata.csv")
+                pred_conf_gt = csv_map.get(stem)
+                label = pred_conf_gt[0] if pred_conf_gt else None
+                conf = pred_conf_gt[1] if pred_conf_gt else None
+                gt = pred_conf_gt[2] if pred_conf_gt else None
+                cand = {"path": p, "label": label, "conf": conf, "gt": gt, "idx": idx}
+                groups.setdefault(base, {})
+                if key not in groups[base]:
+                    groups[base][key] = cand
+                else:
+                    prev = groups[base][key]
+                    prev_conf = prev["conf"]
+                    cand_conf = cand["conf"]
+                    if prev_conf is None and cand_conf is not None:
+                        groups[base][key] = cand
+                    elif (
+                        prev_conf is not None
+                        and cand_conf is not None
+                        and cand_conf > prev_conf
+                    ):
+                        groups[base][key] = cand
+            total_plots += len(groups)
+
     plot_count = 0
-    for folder in folders:
+    folder_iter = folders
+    if max_plot is None and output_folder:
+        folder_iter = tqdm(folders, desc="Folders", leave=True)
+    for folder in folder_iter:
         csv_map = _read_metadata_csv(folder / "metadata.csv")
         gradcams = sorted(folder.glob("*_gradcam.png"))
         if not gradcams:
@@ -232,7 +278,14 @@ def viz_sgm_predict(
         folder_figs = []
         folder_titles = []
 
-        for base_id in sorted(groups.keys()):
+        base_ids = sorted(groups.keys())
+        # Nếu dùng tqdm cho từng base_id khi chạy full và có output_folder
+        if max_plot is None and output_folder:
+            base_id_iter = tqdm(base_ids, desc=f"{folder.name}", leave=False)
+        else:
+            base_id_iter = base_ids
+
+        for base_id in base_id_iter:
             if max_plot is not None and plot_count >= max_plot:
                 return
             g = groups[base_id]
@@ -315,7 +368,8 @@ def viz_sgm_predict(
             else:
                 plt.show()
             plot_count += 1
-
+            if max_plot is None and output_folder and plot_count >= total_plots:
+                break
         # Save predictions to CSV (uncomment if you want)
         # out_csv = folder / "sgm_predict.csv"
         # with open(out_csv, "w", newline="", encoding="utf-8") as fout:

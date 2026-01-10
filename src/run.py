@@ -36,7 +36,8 @@ def run_predictions(
     """Chạy model qua tất cả ảnh, lưu kết quả"""
     dataset_root = Path(dataset_folder).expanduser().resolve()
     output_root = Path(output_folder).expanduser().resolve()
-    output_root.mkdir(parents=True, exist_ok=True)
+    if save_gradcam:
+        output_root.mkdir(parents=True, exist_ok=True)
 
     dev = (
         torch.device(device)
@@ -195,14 +196,22 @@ def run_predictions(
                             f"[ERROR] Không thể lưu gradcam cho {img_path.stem}: {e_save}"
                         )
 
-        folder_csv_path = output_root / folder_key / "metadata.csv"
-        folder_csv_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(folder_csv_path, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(
-                f, fieldnames=["image_id", "ground_truth", "label", "confidence_score"]
-            )
-            w.writeheader()
-            w.writerows(folder_metadata)
+        # Chỉ tạo folder và lưu metadata.csv nếu save_gradcam=True
+        if save_gradcam:
+            folder_csv_path = output_root / folder_key / "metadata.csv"
+            folder_csv_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(folder_csv_path, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "image_id",
+                        "ground_truth",
+                        "label",
+                        "confidence_score",
+                    ],
+                )
+                w.writeheader()
+                w.writerows(folder_metadata)
 
     out_fieldnames = list(fieldnames) if fieldnames else []
     if "predict" not in out_fieldnames:
@@ -210,13 +219,14 @@ def run_predictions(
     if "confidence" not in out_fieldnames:
         out_fieldnames.append("confidence")
 
-    output_csv_path = output_root / "metadata.csv"
-    with open(output_csv_path, "w", newline="", encoding="utf-8") as fout:
-        writer = csv.DictWriter(fout, fieldnames=out_fieldnames)
-        writer.writeheader()
-        writer.writerows(output_rows)
-
-    print(f"[INFO] Đã lưu kết quả dự đoán tổng: {output_csv_path}")
+    # Chỉ lưu output_csv_path nếu save_gradcam=True
+    if save_gradcam:
+        output_csv_path = output_root / "metadata.csv"
+        with open(output_csv_path, "w", newline="", encoding="utf-8") as fout:
+            writer = csv.DictWriter(fout, fieldnames=out_fieldnames)
+            writer.writeheader()
+            writer.writerows(output_rows)
+        print(f"[INFO] Đã lưu kết quả dự đoán tổng: {output_csv_path}")
 
     return predictions_map, output_rows
 

@@ -273,17 +273,12 @@ def viz_sgm_predict(
             continue
 
         pred_rows = []
-
-        # Collect all figures for this folder if output_folder is set
         folder_figs = []
         folder_titles = []
 
         base_ids = sorted(groups.keys())
-        # Nếu dùng tqdm cho từng base_id khi chạy full và có output_folder
-        if max_plot is None and output_folder:
-            base_id_iter = tqdm(base_ids, desc=f"{folder.name}", leave=False)
-        else:
-            base_id_iter = base_ids
+        # Không dùng tqdm cho base_id để tránh nhiều dòng progress bar
+        base_id_iter = base_ids
 
         for base_id in base_id_iter:
             if max_plot is not None and plot_count >= max_plot:

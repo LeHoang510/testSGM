@@ -4,9 +4,9 @@ import argparse
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from src.pre_process import SGM_preprocess
-from src.utils import find_image_path, print_stats
-from src.csv_processor import load_and_process_csv
+from testSGM.src.pre_process import SGM_preprocess
+from testSGM.src.utils import find_image_path, print_stats
+from testSGM.src.csv_processor import load_and_process_csv
 from PIL import Image
 
 

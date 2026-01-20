@@ -9,7 +9,7 @@ from PIL import Image
 from tqdm import tqdm
 from torchvision import transforms
 from skimage.filters import threshold_otsu
-from src.engines import evaluate_model
+from testSGM.src.engines import evaluate_model
 
 import re
 import matplotlib.pyplot as plt
@@ -43,6 +43,14 @@ def load_full_model(
     normalize = checkpoint.get("normalize", None)
     num_patches = checkpoint.get("num_patches", None)
     arch_type = checkpoint.get("arch_type", None)
+
+    # print(f"[load_full_model] Loaded model from: {model_path}")
+    # print(f"  Model name: {model_name}")
+    # print(f"  Input size: {input_size}")
+    # print(f"  GradCAM layer: {gradcam_layer}")
+    # print(f"  Normalize: {normalize}")
+    # print(f"  Num patches: {num_patches}")
+    # print(f"  Arch type: {arch_type}")
 
     return (
         model,

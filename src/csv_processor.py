@@ -2,7 +2,7 @@ import csv
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from src.utils import file_hash, find_image_path, filter_large_bboxes
+from testSGM.src.utils import file_hash, find_image_path, filter_large_bboxes
 
 
 def load_and_process_csv(
